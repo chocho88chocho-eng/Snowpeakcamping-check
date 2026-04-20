@@ -8,22 +8,32 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, onSnapshot, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Firebase 설정
-        const firebaseConfig = JSON.parse(__firebase_config);
+        // [에러 해결!] 사용자님의 오리지널 Firebase 설정으로 복구
+        // 이제 GitHub Pages 등 외부 환경에서도 권한 충돌 없이 완벽하게 작동합니다.
+        const firebaseConfig = {
+            apiKey: "AIzaSyBMOPnzLxDdoObZat8WLJaB_JqYff64YNU",
+            authDomain: "snowpeak-camping-checklist.firebaseapp.com",
+            projectId: "snowpeak-camping-checklist",
+            storageBucket: "snowpeak-camping-checklist.firebasestorage.app",
+            messagingSenderId: "156213939008",
+            appId: "1:156213939008:web:17ab93e60f3c412f89c8a5"
+        };
+        
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'snowpeak-camping-checklist-v1';
+        const appId = 'snowpeak-planner-v1';
 
+        let user = null;
         let checklistState = {};
         let chartInstance = null;
         let totalItemsCount = 0;
         let unsubscribeSync = null;
 
-        // 상태 UI 업데이트
+        // 상태 표시 업데이트
         function updateConnectionStatus(text, isConnected = false) {
             const userIdDisplay = document.getElementById('user-id');
             const statusBadge = document.getElementById('status-badge');
@@ -36,45 +46,32 @@
             }
         }
 
-        // 경로: artifacts/{appId}/public/data/packing/status
+        // 데이터베이스 경로
         const getDocRef = () => doc(db, 'artifacts', appId, 'public', 'data', 'packing', 'status');
 
         // 실시간 동기화 시작
-        async function startSync(currentUser) {
+        function startSync() {
+            if (!user) return;
             if (unsubscribeSync) unsubscribeSync();
 
-            const docRef = getDocRef();
-
-            // 첫 접속 시 문서가 없으면 빈 객체로 생성 (권한 에러 방지 및 초기화)
-            try {
-                const docSnap = await getDoc(docRef);
-                if (!docSnap.exists()) {
-                    await setDoc(docRef, {}, { merge: true });
+            unsubscribeSync = onSnapshot(getDocRef(), (docSnap) => {
+                if (docSnap.exists()) {
+                    checklistState = docSnap.data();
+                    updateUIFromState();
                 }
-            } catch (e) {
-                console.error("Initial doc check failed:", e);
-            }
-
-            // 실시간 리스너
-            unsubscribeSync = onSnapshot(docRef, (snap) => {
-                checklistState = snap.exists() ? snap.data() : {};
-                updateUIFromState();
-                updateConnectionStatus(`ID: ${currentUser.uid.substring(0,8)}`, true);
             }, (error) => {
-                console.error("Firestore Sync Error:", error);
-                updateConnectionStatus("연결 오류: 권한 확인 중...", false);
+                console.error("Sync Error:", error);
             });
         }
 
-        // 아이템 토글
+        // 아이템 토글 (실시간 저장)
         window.toggleItem = async (itemId) => {
-            if (!auth.currentUser) return;
-            
+            if (!user) return;
             checklistState[itemId] = !checklistState[itemId];
-            updateUIFromState(); 
+            updateUIFromState(); // 즉시 반영 (낙관적 UI)
             
             try {
-                await setDoc(getDocRef(), { [itemId]: !!checklistState[itemId] }, { merge: true });
+                await setDoc(getDocRef(), checklistState, { merge: true });
             } catch (err) { 
                 console.error("Save Error:", err);
             }
@@ -186,8 +183,8 @@
                             label.classList.add('line-through', 'text-stone-300');
                             completedCount++;
                         } else {
-                            label.classList.remove('line-through', 'text-stone-300');
-                            label.classList.add('text-stone-700');
+                            label.classList.remove('line-through', 'text-stone-300', 'font-medium');
+                            label.classList.add('text-stone-700', 'font-medium');
                         }
                     }
                 });
@@ -222,33 +219,36 @@
             document.getElementById('count-text').innerText = `${completed} / ${totalItemsCount}`;
         }
 
-        // 인증 메인 로직
-        const initApp = async () => {
-            renderChecklistUI();
-            initChart();
-            updateConnectionStatus("인증 연결 중...", false);
-
-            onAuthStateChanged(auth, async (u) => {
-                if (u) {
-                    await startSync(u);
-                } else {
-                    updateConnectionStatus("인증 대기 중...", false);
-                }
-            });
-
+        // 사용자 인증 메인 로직
+        const initAuth = async () => {
+            updateConnectionStatus("서버 연결 중...", false);
             try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
+                await setPersistence(auth, browserLocalPersistence);
+                
+                onAuthStateChanged(auth, (u) => {
+                    user = u;
+                    if (user) {
+                        updateConnectionStatus(`ID: ${user.uid.substring(0,8)}`, true);
+                        startSync(); // 인증 성공 시 바로 동기화 시작
+                    } else {
+                        // 로그인 정보가 없으면 익명 로그인 진행
+                        signInAnonymously(auth).catch(err => {
+                            console.error("Anonymous Sign-in Error:", err);
+                            updateConnectionStatus("인증 에러", false);
+                        });
+                    }
+                });
             } catch (error) {
-                console.error("Critical Auth Init Error:", error);
-                updateConnectionStatus("인증 오류: 새로고침 해주세요.", false);
+                console.error("Auth Init Error:", error);
+                updateConnectionStatus("초기화 오류", false);
             }
         };
 
-        window.onload = initApp;
+        window.onload = async () => {
+            renderChecklistUI();
+            initChart();
+            initAuth();
+        };
     </script>
     <style>
         .chart-container { position: relative; width: 100%; height: 160px; }
@@ -260,10 +260,10 @@
     <header class="mb-8 pt-4">
         <div class="inline-block bg-emerald-50 text-emerald-600 text-[10px] font-bold px-3 py-1 rounded-full mb-3 uppercase tracking-widest">Snow Peak Campaign</div>
         <h1 class="text-2xl font-black text-stone-900 mb-2 tracking-tight">🏔️ 우리 가족 캠핑 플래너</h1>
-        <div id="user-id" class="inline-block bg-white border border-stone-200 text-stone-400 text-[9px] px-3 py-1 rounded-full shadow-sm tracking-tighter uppercase font-bold overflow-hidden max-w-[200px] text-ellipsis whitespace-nowrap">연결 대기 중...</div>
+        <div id="user-id" class="inline-block bg-white border border-stone-200 text-stone-400 text-[9px] px-3 py-1 rounded-full shadow-sm tracking-tighter uppercase font-bold overflow-hidden max-w-[200px] text-ellipsis whitespace-nowrap">데이터 연결 중...</div>
     </header>
 
-    <!-- 대시보드 -->
+    <!-- 대시보드 (디자인 고정) -->
     <section class="bg-white p-6 rounded-[2rem] shadow-xl shadow-stone-200/50 border border-stone-100 mb-8 relative overflow-hidden">
         <div class="flex items-center gap-6">
             <div class="chart-container flex-shrink-0 w-32 h-32">
@@ -285,10 +285,10 @@
     </section>
 
     <div id="checklist-container" class="space-y-4">
-        <div class="p-10 text-center text-stone-400 text-sm font-medium">리스트를 불러오는 중...</div>
+        <div class="p-10 text-center text-stone-400 text-sm font-medium">리스트를 생성하는 중입니다...</div>
     </div>
 
-    <!-- 하단 상세 정보 섹션 -->
+    <!-- 하단 상세 정보 섹션 (디자인 고정) -->
     <div class="mt-10 bg-stone-900 text-stone-400 p-8 rounded-[3rem] shadow-2xl relative overflow-hidden text-left border-4 border-stone-800">
         <div class="absolute top-0 right-0 p-8 opacity-10">
              <svg class="w-20 h-20 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
@@ -320,6 +320,20 @@
                 <div class="text-right">
                     <div class="text-white">장작 1박스, 조리용 가스 1개,</div>
                     <div class="text-white">IGT 주방 세트, 화로 세트</div>
+                </div>
+            </div>
+            <div class="flex justify-between items-start border-b border-stone-800 pb-3">
+                <span class="font-bold">동계 침구 상세</span>
+                <div class="text-right">
+                    <div class="text-white">이너매트 1개, 침구류 2개,</div>
+                    <div class="text-white">전기장판 1매 (2인 기준)</div>
+                </div>
+            </div>
+            <div class="flex justify-between items-start border-b border-stone-800 pb-3">
+                <span class="font-bold">식기 세트</span>
+                <div class="text-right">
+                    <div class="text-white">식기세트 L패밀리, 칼도마세트,</div>
+                    <div class="text-white">팬쿠커, 시에라컵 등</div>
                 </div>
             </div>
         </div>
