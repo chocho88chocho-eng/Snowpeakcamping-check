@@ -9,22 +9,21 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, onSnapshot, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Firebase 설정 및 초기화
+        // Firebase 설정
         const firebaseConfig = JSON.parse(__firebase_config);
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'snowpeak-camping-checklist-v1';
 
-        let user = null;
         let checklistState = {};
         let chartInstance = null;
         let totalItemsCount = 0;
         let unsubscribeSync = null;
 
-        // 상태 표시 업데이트
+        // 상태 UI 업데이트
         function updateConnectionStatus(text, isConnected = false) {
             const userIdDisplay = document.getElementById('user-id');
             const statusBadge = document.getElementById('status-badge');
@@ -37,51 +36,45 @@
             }
         }
 
-        // 가이드라인 준수 경로: artifacts/{appId}/public/data/packing/status
+        // 경로: artifacts/{appId}/public/data/packing/status
         const getDocRef = () => doc(db, 'artifacts', appId, 'public', 'data', 'packing', 'status');
 
-        // 실시간 동기화 시작 (반드시 유효한 auth.currentUser가 있을 때 호출)
-        function startSync() {
-            // 기존 구독 해제
-            if (unsubscribeSync) {
-                unsubscribeSync();
-                unsubscribeSync = null;
-            }
+        // 실시간 동기화 시작
+        async function startSync(currentUser) {
+            if (unsubscribeSync) unsubscribeSync();
 
-            if (!auth.currentUser) {
-                console.warn("No authenticated user found. Skipping sync.");
-                return;
-            }
+            const docRef = getDocRef();
 
-            // 실시간 리스너 설정
-            unsubscribeSync = onSnapshot(getDocRef(), (docSnap) => {
-                if (docSnap.exists()) {
-                    checklistState = docSnap.data();
-                    updateUIFromState();
+            // 첫 접속 시 문서가 없으면 빈 객체로 생성 (권한 에러 방지 및 초기화)
+            try {
+                const docSnap = await getDoc(docRef);
+                if (!docSnap.exists()) {
+                    await setDoc(docRef, {}, { merge: true });
                 }
-                updateConnectionStatus(`ID: ${auth.currentUser.uid.substring(0,8)}`, true);
+            } catch (e) {
+                console.error("Initial doc check failed:", e);
+            }
+
+            // 실시간 리스너
+            unsubscribeSync = onSnapshot(docRef, (snap) => {
+                checklistState = snap.exists() ? snap.data() : {};
+                updateUIFromState();
+                updateConnectionStatus(`ID: ${currentUser.uid.substring(0,8)}`, true);
             }, (error) => {
                 console.error("Firestore Sync Error:", error);
-                if (error.code === 'permission-denied') {
-                    updateConnectionStatus("권한 에러: 인증 재시도 중...", false);
-                } else {
-                    updateConnectionStatus("연결 일시 중단", false);
-                }
+                updateConnectionStatus("연결 오류: 권한 확인 중...", false);
             });
         }
 
-        // 아이템 토글 (실시간 저장)
+        // 아이템 토글
         window.toggleItem = async (itemId) => {
-            if (!auth.currentUser) {
-                updateConnectionStatus("인증 필요", false);
-                return;
-            }
+            if (!auth.currentUser) return;
             
             checklistState[itemId] = !checklistState[itemId];
-            updateUIFromState(); // 즉시 반영 (낙관적 UI)
+            updateUIFromState(); 
             
             try {
-                await setDoc(getDocRef(), checklistState, { merge: true });
+                await setDoc(getDocRef(), { [itemId]: !!checklistState[itemId] }, { merge: true });
             } catch (err) { 
                 console.error("Save Error:", err);
             }
@@ -229,27 +222,21 @@
             document.getElementById('count-text').innerText = `${completed} / ${totalItemsCount}`;
         }
 
-        // 인증 및 초기화 메인 로직
+        // 인증 메인 로직
         const initApp = async () => {
             renderChecklistUI();
             initChart();
             updateConnectionStatus("인증 연결 중...", false);
 
-            try {
-                // 인증 상태 리스너 등록
-                onAuthStateChanged(auth, (u) => {
-                    if (u) {
-                        user = u;
-                        console.log("Authenticated User UID:", u.uid);
-                        // 인증 성공 후 동기화 시작
-                        startSync();
-                    } else {
-                        user = null;
-                        updateConnectionStatus("인증 대기 중...", false);
-                    }
-                });
+            onAuthStateChanged(auth, async (u) => {
+                if (u) {
+                    await startSync(u);
+                } else {
+                    updateConnectionStatus("인증 대기 중...", false);
+                }
+            });
 
-                // 인증 시도
+            try {
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                     await signInWithCustomToken(auth, __initial_auth_token);
                 } else {
@@ -257,7 +244,7 @@
                 }
             } catch (error) {
                 console.error("Critical Auth Init Error:", error);
-                updateConnectionStatus("인증 오류가 발생했습니다.", false);
+                updateConnectionStatus("인증 오류: 새로고침 해주세요.", false);
             }
         };
 
