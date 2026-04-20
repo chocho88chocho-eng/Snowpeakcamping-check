@@ -11,44 +11,69 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Firebase 설정 (환경 변수 사용)
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
+        // Firebase 설정 확인 및 초기화
+        let app, auth, db;
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'snowpeak-camping-checklist-v1';
+
+        function showError(msg) {
+            const errorDiv = document.getElementById('debug-error');
+            if (errorDiv) {
+                errorDiv.innerText = msg;
+                errorDiv.classList.remove('hidden');
+            }
+        }
+
+        async function startApp() {
+            try {
+                if (typeof __firebase_config === 'undefined') {
+                    showError("Firebase 설정이 로드되지 않았습니다.");
+                    return;
+                }
+                const firebaseConfig = JSON.parse(__firebase_config);
+                app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
+                // 오프라인 지원 (선택사항)
+                try {
+                    await enableIndexedDbPersistence(db);
+                } catch (err) {
+                    console.warn("Persistence failed", err.code);
+                }
+
+                // 인증 리스너 설정
+                onAuthStateChanged(auth, (u) => {
+                    if (u) {
+                        user = u;
+                        updateConnectionStatus("연결됨", true);
+                        startSync();
+                    } else {
+                        updateConnectionStatus("인증 필요", false);
+                    }
+                });
+
+                // 익명 로그인 시도
+                updateConnectionStatus("인증 시도 중...", false);
+                await setPersistence(auth, browserLocalPersistence);
+                
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth).catch(e => {
+                        showError("익명 로그인 실패: " + e.message);
+                    });
+                }
+
+            } catch (e) {
+                showError("초기화 에러: " + e.message);
+            }
+        }
 
         let user = null;
         let checklistState = {};
         let chartInstance = null;
         let totalItemsCount = 0;
 
-        // 오프라인 지원 활성화
-        const enableOffline = async () => {
-            try {
-                await enableIndexedDbPersistence(db);
-            } catch (err) {
-                console.warn("Persistence Error:", err.code);
-            }
-        };
-
-        // 인증 초기화 (익명 로그인)
-        const initAuth = async () => {
-            updateConnectionStatus("인증 시도 중...", false);
-            try {
-                await setPersistence(auth, browserLocalPersistence);
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
-            } catch (error) {
-                console.error("Auth Error:", error);
-                updateConnectionStatus("인증 실패: 설정 확인", false);
-            }
-        };
-
-        // 상단 상태 표시줄 업데이트
         function updateConnectionStatus(text, isConnected = false) {
             const statusLabel = document.getElementById('status-label');
             const statusIndicator = document.getElementById('status-indicator');
@@ -61,19 +86,10 @@
                     : "w-2 h-2 rounded-full bg-amber-400";
             }
             if (userIdDisplay && isConnected && user) {
-                userIdDisplay.innerText = `UID: ${user.uid.substring(0, 8)}...`;
+                userIdDisplay.innerText = `ID: ${user.uid.substring(0, 8)}`;
             }
         }
 
-        onAuthStateChanged(auth, (u) => {
-            user = u;
-            if (user) {
-                updateConnectionStatus("연결됨", true);
-                startSync();
-            }
-        });
-
-        // 스노우피크 제공 정보를 기반으로 보강된 체크리스트
         const checklistData = [
             {
                 categoryId: "essential",
@@ -131,18 +147,21 @@
                 }
                 updateUIFromState();
             }, (error) => {
-                console.error("Sync Error:", error);
+                showError("데이터 동기화 실패: " + error.message);
             });
         }
 
         window.toggleItem = async (itemId) => {
+            if (!user) {
+                showError("로그인되지 않아 저장할 수 없습니다.");
+                return;
+            }
             checklistState[itemId] = !checklistState[itemId];
             updateUIFromState();
-            if (!user) return;
             try {
                 await setDoc(getDocRef(), checklistState, { merge: true });
             } catch (err) { 
-                console.error("Save Error:", err);
+                showError("저장 실패: " + err.message);
             }
         };
 
@@ -162,7 +181,7 @@
                     itemsHtml += `
                         <div onclick="toggleItem('${item.id}')" class="flex items-center p-4 hover:bg-stone-50 transition cursor-pointer border-b border-stone-50 last:border-0 group text-left">
                             <div class="relative flex items-center justify-center">
-                                <input type="checkbox" id="check-${item.id}" class="peer w-6 h-6 rounded-lg border-2 border-stone-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer appearance-none checked:bg-emerald-600 checked:border-emerald-600 transition-all">
+                                <input type="checkbox" id="check-${item.id}" class="peer w-6 h-6 rounded-lg border-2 border-stone-300 text-emerald-600 appearance-none checked:bg-emerald-600 checked:border-emerald-600 transition-all">
                                 <svg class="absolute w-4 h-4 text-white hidden peer-checked:block pointer-events-none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                                     <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
                                 </svg>
@@ -208,7 +227,6 @@
 
         function initChart() {
             const ctx = document.getElementById('progressChart').getContext('2d');
-            if (chartInstance) chartInstance.destroy();
             chartInstance = new Chart(ctx, {
                 type: 'doughnut',
                 data: {
@@ -233,21 +251,23 @@
             document.getElementById('count-text').innerText = `${completed} / ${totalItemsCount}`;
         }
 
-        window.onload = async () => {
+        window.onload = () => {
             renderChecklistUI();
             initChart();
-            await enableOffline();
-            initAuth();
+            startApp();
         };
     </script>
     <style>
         .chart-container { position: relative; width: 100%; height: 160px; }
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     </style>
 </head>
 <body class="bg-stone-50 text-stone-800 antialiased min-h-screen pb-12">
 
 <div class="max-w-xl mx-auto p-4 md:p-6 text-center">
+    <!-- 상태 알림 영역 -->
+    <div id="debug-error" class="hidden mb-4 p-3 bg-red-50 text-red-600 text-xs rounded-xl border border-red-100 font-mono text-left"></div>
+
     <!-- 커스텀 헤더 -->
     <header class="mb-6 pt-4 flex flex-col items-center">
         <div class="flex items-center gap-2 mb-4 bg-white px-4 py-2 rounded-full shadow-sm border border-stone-100">
@@ -258,7 +278,6 @@
         </div>
         <div class="inline-block bg-emerald-50 text-emerald-600 text-[10px] font-bold px-3 py-1 rounded-full mb-3 uppercase tracking-widest">Snow Peak Campfield</div>
         <h1 class="text-3xl font-black text-stone-900 mb-2 tracking-tight">🏔️ 우리 가족 캠핑 플래너</h1>
-        <p class="text-stone-400 text-sm">실시간으로 함께 준비물을 체크하세요</p>
     </header>
 
     <!-- 대시보드 섹션 -->
@@ -286,14 +305,14 @@
         <div class="p-10 text-center text-stone-300 text-sm font-medium italic">데이터를 불러오는 중...</div>
     </div>
 
-    <!-- 스노우피크 공식 정보 섹션 -->
+    <!-- 정보 섹션 -->
     <div class="mt-8 bg-stone-900 text-stone-400 p-8 rounded-[3rem] shadow-2xl relative overflow-hidden text-left border-4 border-stone-800">
         <h3 class="font-black text-white mb-6 flex items-center text-lg">
             <span class="bg-emerald-500 w-2 h-6 rounded-full mr-3"></span>
             캠프필드 숙박 정보
         </h3>
         
-        <div class="space-y-4 text-[13px] mb-8">
+        <div class="space-y-4 text-[13px]">
             <div class="flex justify-between items-center border-b border-stone-800 pb-2">
                 <span class="font-bold text-stone-500">체크인 / 아웃</span>
                 <span class="text-stone-200">15:00 / 12:00</span>
@@ -303,31 +322,11 @@
                 <span class="text-amber-400 font-bold underline underline-offset-4">불가능 (카트 이용 필요)</span>
             </div>
             <div class="flex justify-between items-start border-b border-stone-800 pb-2">
-                <span class="font-bold text-stone-500">기본 제공</span>
-                <div class="text-right text-stone-200">
-                    <div>장작 1Box, 조리용 가스 1개,</div>
-                    <div>IGT 주방 세트, 화로 세트</div>
-                </div>
-            </div>
-            <div class="flex justify-between items-start border-b border-stone-800 pb-2">
                 <span class="font-bold text-stone-500">침구 구성</span>
                 <div class="text-right text-emerald-400 font-medium">
                     <div>동계: 이너매트 1, 침구 2, 전기장판 1</div>
                 </div>
             </div>
-            <div class="flex justify-between items-center border-b border-stone-800 pb-2">
-                <span class="font-bold text-stone-500">텐트 종류</span>
-                <span class="text-stone-200">랜드록 (625cm X 405cm)</span>
-            </div>
-        </div>
-
-        <div class="bg-stone-800/40 p-5 rounded-2xl border border-stone-700">
-            <p class="text-white font-bold text-xs mb-2 leading-relaxed flex items-center">
-                <span class="mr-2">💡</span> 전문가 팁
-            </p>
-            <p class="text-[11px] text-stone-400 leading-relaxed">
-                4월 말은 산속 기온이 급격히 떨어집니다. 캠프필드에서 제공하는 전기장판 외에 <strong>두꺼운 양말과 아기용 여벌 외투</strong>를 꼭 챙기세요. 차량 진입이 안 되므로 짐은 카트로 옮기기 편하게 분류하는 것이 좋습니다.
-            </p>
         </div>
     </div>
 </div>
