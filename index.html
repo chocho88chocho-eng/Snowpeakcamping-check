@@ -8,7 +8,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         const firebaseConfig = JSON.parse(__firebase_config);
@@ -22,9 +22,12 @@
         let chartInstance = null;
         let totalItemsCount = 0;
 
-        // 초기화 함수
+        // 최적화된 인증 함수: 대기 시간을 최소화하기 위해 즉시 실행
         const initAuth = async () => {
             try {
+                // 로컬 영속성 설정 (재접속 시 인증 속도 향상)
+                await setPersistence(auth, browserLocalPersistence);
+                
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                     await signInWithCustomToken(auth, __initial_auth_token);
                 } else {
@@ -32,32 +35,33 @@
                 }
             } catch (error) {
                 console.error("Auth Error:", error);
-                document.getElementById('user-id').innerText = "오프라인 모드";
+                const userIdDisplay = document.getElementById('user-id');
+                if (userIdDisplay) userIdDisplay.innerText = "오프라인 모드 작동 중";
             }
         };
 
-        // 인증 상태 변경 리스너
+        // 인증 상태 리스너: UI 업데이트를 분리하여 인증 지연 시에도 화면이 깨지지 않게 함
         onAuthStateChanged(auth, (u) => {
             user = u;
             const userIdDisplay = document.getElementById('user-id');
             const statusBadge = document.getElementById('status-badge');
             
             if (user) {
-                userIdDisplay.innerText = `접속 ID: ${user.uid}`;
-                statusBadge.innerText = "실시간 동기화 중";
-                statusBadge.className = "bg-emerald-100 text-emerald-700 text-[10px] px-2 py-1 rounded shadow-sm font-bold";
+                if (userIdDisplay) userIdDisplay.innerText = `ID: ${user.uid}`;
+                if (statusBadge) {
+                    statusBadge.innerText = "실시간 연결됨";
+                    statusBadge.className = "bg-emerald-500 text-white text-[10px] px-2 py-1 rounded shadow-sm font-bold";
+                }
                 startSync();
-            } else {
-                userIdDisplay.innerText = "사용자 인증 중...";
             }
         });
 
         const checklistData = [
             {
                 categoryId: "coffee",
-                categoryName: "☕ 커피 & 티타임 (바리스타 세트 활용)",
+                categoryName: "☕ 커피 & 티타임 (바리스타 세트)",
                 items: [
-                    { id: "c1", label: "볶은 원두 (홀빈 50~100g, 직접 갈기)" },
+                    { id: "c1", label: "볶은 원두 (홀빈 50~100g)" },
                     { id: "c2", label: "종이 필터 (바리스타 드리퍼용)" }
                 ]
             },
@@ -65,24 +69,24 @@
                 categoryId: "adult-food",
                 categoryName: "🥩 어른용 식사",
                 items: [
-                    { id: "af1", label: "구이용 고기 (목살 추천 - 불쇼 예방)" },
-                    { id: "af2", label: "구이용 야채 (쌈, 버섯, 양파, 마늘, 아스파라거스)" },
-                    { id: "af3", label: "양념류 (허브솔트, 쌈장, 참기름 - 소분)" },
+                    { id: "af1", label: "구이용 고기 (목살 추천)" },
+                    { id: "af2", label: "구이용 야채 (쌈, 버섯, 마늘)" },
+                    { id: "af3", label: "양념류 (허브솔트, 쌈장, 참기름)" },
                     { id: "af4", label: "국물 요리 (밀키트 된장/부대찌개)" },
                     { id: "af5_1", label: "햇반 (2~3개)" },
                     { id: "af5_2", label: "컵라면 (개별 준비)" },
-                    { id: "af6", label: "음료 (생수 넉넉히, 맥주/와인, 음료수)" }
+                    { id: "af6", label: "음료 (생수, 맥주, 와인)" }
                 ]
             },
             {
                 categoryId: "baby-food",
                 categoryName: "🍼 아기용 식사 (16개월)",
                 items: [
-                    { id: "bf1", label: "완료기 이유식/유아식 (냉동/실온 넉넉히)" },
-                    { id: "bf2", label: "구이용 간식 (아기 소시지, 고구마/감자)" },
+                    { id: "bf1", label: "완료기 이유식/유아식 (넉넉히)" },
+                    { id: "bf2", label: "구이용 간식 (아기 소시지, 고구마)" },
                     { id: "bf3", label: "간식 (퓨레, 떡뻥, 과일)" },
-                    { id: "bf4", label: "식기류 (실리콘 식기, 수저, 포크, 빨대컵)" },
-                    { id: "bf5", label: "위생 (일회용 턱받이, 주방세제, 수세미)" }
+                    { id: "bf4", label: "식기류 (실리콘 식기, 빨대컵)" },
+                    { id: "bf5", label: "위생 (일회용 턱받이, 주방세제)" }
                 ]
             },
             {
@@ -93,21 +97,19 @@
                     { id: "bc2", label: "물티슈 (새거 1팩) & 건티슈" },
                     { id: "bc3", label: "비판텐 (발진 크림)" },
                     { id: "bc4", label: "상하복 세트 (여벌 2~3벌)" },
-                    { id: "bc5", label: "수면 조끼 & 두툼한 가디건 (필수)" },
-                    { id: "bc6", label: "양말 & 모자 (체온 유지용)" },
-                    { id: "bc7", label: "애착 이불이나 베개" },
-                    { id: "bc8", label: "상비약 (해열제, 체온계, 연고, 모기 패치)" },
-                    { id: "bc9", label: "놀거리 (비눗방울, 모래놀이 세트)" }
+                    { id: "bc5", label: "수면 조끼 & 가디건" },
+                    { id: "bc8", label: "상비약 (해열제, 체온계, 연고)" },
+                    { id: "bc9", label: "놀거리 (비눗방울, 모래놀이)" }
                 ]
             },
             {
                 categoryId: "convenience",
                 categoryName: "🧺 캠핑 편의 용품",
                 items: [
-                    { id: "p1", label: "방수 돗자리 (전실 파쇄석 위 설치)" },
-                    { id: "p2", label: "이소가스 1개 추가 (커피용 여분)" },
-                    { id: "p3", label: "일회용품 (종이컵, 나무젓가락)" },
-                    { id: "p4", label: "개별 조명 (야간 이동 시 사용)" }
+                    { id: "p1", label: "방수 돗자리 (파쇄석용)" },
+                    { id: "p2", label: "이소가스 1개 추가 (커피용)" },
+                    { id: "p3", label: "일회용품 (종이컵, 젓가락)" },
+                    { id: "p4", label: "개별 조명 (야간 이동용)" }
                 ]
             }
         ];
@@ -127,16 +129,22 @@
         }
 
         window.toggleItem = async (itemId) => {
-            if (!user) return;
+            // 낙관적 UI: 서버 응답 전 UI를 먼저 바꿈
             checklistState[itemId] = !checklistState[itemId];
             updateUIFromState();
+
+            if (!user) return; // 인증 안된 경우 저장만 안함
             try {
                 await setDoc(getDocRef(), checklistState, { merge: true });
-            } catch (err) { console.error("Save Error:", err); }
+            } catch (err) { 
+                console.error("Save Error:", err);
+                // 실패 시 롤백 (선택 사항)
+            }
         };
 
         function renderChecklistUI() {
             const container = document.getElementById('checklist-container');
+            if (!container) return;
             container.innerHTML = '';
             totalItemsCount = 0;
             checklistData.forEach(category => {
@@ -161,7 +169,7 @@
                 });
                 section.innerHTML = `
                     <div class="bg-stone-50 px-5 py-3 border-b border-stone-200 text-left">
-                        <h3 class="font-bold text-stone-800 text-[11px] uppercase tracking-wider">${category.categoryName}</h3>
+                        <h3 class="font-bold text-stone-800 text-[10px] uppercase tracking-wider">${category.categoryName}</h3>
                     </div>
                     <div class="divide-y divide-stone-50">${itemsHtml}</div>
                 `;
@@ -219,9 +227,9 @@
         }
 
         window.onload = () => {
-            renderChecklistUI();
+            renderChecklistUI(); // UI 먼저 렌더링
             initChart();
-            initAuth();
+            initAuth(); // 인증은 백그라운드에서 진행
         };
     </script>
     <style>
@@ -238,7 +246,7 @@
     <header class="text-center mb-8 pt-4">
         <div class="inline-block bg-emerald-50 text-emerald-600 text-[10px] font-bold px-3 py-1 rounded-full mb-3 uppercase tracking-widest">Snow Peak Campaign</div>
         <h1 class="text-2xl font-black text-stone-900 mb-2 tracking-tight">🏔️ 우리 가족 캠핑 플래너</h1>
-        <div id="user-id" class="inline-block bg-white border border-stone-200 text-stone-400 text-[9px] px-3 py-1 rounded-full shadow-sm tracking-tighter uppercase font-bold overflow-hidden max-w-[200px] text-ellipsis whitespace-nowrap">사용자 인식 중...</div>
+        <div id="user-id" class="inline-block bg-white border border-stone-200 text-stone-400 text-[9px] px-3 py-1 rounded-full shadow-sm tracking-tighter uppercase font-bold overflow-hidden max-w-[200px] text-ellipsis whitespace-nowrap">연결 중...</div>
     </header>
 
     <section class="bg-white p-6 rounded-[2rem] shadow-xl shadow-stone-200/50 border border-stone-100 mb-8 relative overflow-hidden">
@@ -252,7 +260,7 @@
             </div>
             <div class="flex-1 text-left">
                 <div class="flex items-center gap-2 mb-3">
-                    <span id="status-badge" class="bg-stone-100 text-stone-400 text-[10px] px-2 py-1 rounded shadow-sm font-bold animate-pulse">인증 대기</span>
+                    <span id="status-badge" class="bg-stone-100 text-stone-400 text-[10px] px-2 py-1 rounded shadow-sm font-bold">인증 대기</span>
                     <span class="text-stone-400 text-[10px] font-bold uppercase tracking-widest">Cloud Sync</span>
                 </div>
                 <h2 class="text-xl font-black mb-1 text-stone-800 leading-tight tracking-tight">패킹 진행도</h2>
@@ -261,7 +269,10 @@
         </div>
     </section>
 
-    <div id="checklist-container" class="space-y-4"></div>
+    <div id="checklist-container" class="space-y-4">
+        <!-- 스켈레톤 UI 역할을 하는 초기 로딩 메시지 -->
+        <div class="p-10 text-center text-stone-400 text-sm font-medium">플래너를 불러오는 중입니다...</div>
+    </div>
 
     <div class="mt-10 bg-stone-900 text-stone-400 p-8 rounded-[2rem] shadow-2xl relative overflow-hidden text-left">
         <div class="absolute top-0 right-0 p-6 opacity-5">
@@ -280,43 +291,27 @@
             </div>
             <div class="flex justify-between items-center border-b border-stone-800 pb-3">
                 <span class="text-stone-500 font-bold uppercase tracking-tighter">시즌 침구 구성</span>
-                <span class="text-emerald-400 font-bold">동계 침구 (4월 말까지 제공)</span>
+                <span class="text-emerald-400 font-bold">동계 침구 (4월 말까지)</span>
             </div>
             <div class="flex justify-between items-center border-b border-stone-800 pb-3">
                 <span class="text-stone-500 font-bold uppercase tracking-tighter">차량 진입</span>
-                <span class="text-white">진입 불가 (카트 이동 필요)</span>
+                <span class="text-white">진입 불가 (카트 이동)</span>
             </div>
             <div class="flex justify-between items-center border-b border-stone-800 pb-3">
                 <span class="text-stone-500 font-bold uppercase tracking-tighter">텐트 정보</span>
-                <span class="text-white">랜드록 (거실형 대형 텐트)</span>
+                <span class="text-white">랜드록 (거실형 대형)</span>
             </div>
             <div class="flex justify-between items-start border-b border-stone-800 pb-3">
                 <span class="text-stone-500 font-bold uppercase tracking-tighter">기본 제공</span>
                 <div class="text-right text-white">
-                    장작 1박스, 조리용 가스 1개,<br>IGT 주방 세트, 화로 세트
+                    장작 1박스, 가스 1개,<br>IGT 주방, 화로 세트
                 </div>
             </div>
-            <div class="flex justify-between items-start border-b border-stone-800 pb-3">
-                <span class="text-stone-500 font-bold uppercase tracking-tighter">등계 침구 상세</span>
-                <div class="text-right text-white">
-                    이너매트 1개, 침구류 2개,<br>전기장판 1매 (2인 기준)
-                </div>
-            </div>
-            <div class="flex justify-between items-start border-b border-stone-800 pb-3">
-                <span class="text-stone-500 font-bold uppercase tracking-tighter">식기 세트</span>
-                <div class="text-right text-white">
-                    식기세트 L패밀리, 칼도마세트,<br>팬쿠커, 시에라컵 등
-                </div>
-            </div>
-
+            
             <div class="bg-stone-800/50 p-4 rounded-2xl mt-4 border border-emerald-900/30">
                 <p class="text-emerald-400 leading-relaxed font-bold">
-                    💡 4월 말 산속은 밤에 매우 춥습니다. 아기 수면조끼와 수분 공급을 위한 빨대컵을 잊지 마세요!
+                    💡 밤에는 매우 춥습니다. 아기 수면조끼를 꼭 챙기세요!
                 </p>
-                <div class="mt-2 text-[10px] text-stone-500 leading-tight italic">
-                    * 필드바리스타 세트 포함 (커피 원두만 챙겨오세요!)<br>
-                    * 매너타임: 22:00 (전 사이트 조명 소등 권고)
-                </div>
             </div>
         </div>
     </div>
