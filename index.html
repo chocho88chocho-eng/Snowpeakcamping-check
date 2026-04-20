@@ -12,9 +12,7 @@
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // ==========================================================
-        // ✅ SiriusS님의 Firebase 설정값이 적용되었습니다.
-        // ==========================================================
+        // Firebase 설정 (SiriusS님의 실제 설정값)
         const firebaseConfig = {
             apiKey: "AIzaSyBMOPnzLxDdoObZat8WLJaB_JqYff64YNU",
             authDomain: "snowpeak-camping-checklist.firebaseapp.com",
@@ -23,22 +21,9 @@
             messagingSenderId: "156213939008",
             appId: "1:156213939008:web:17ab93e60f3c412f89c8a5"
         };
-        // ==========================================================
 
         let app, auth, db;
         const appId = 'snowpeak-camping-planner-v1';
-
-        async function signInWithRetry(auth, retries = 5, delay = 1000) {
-            for (let i = 0; i < retries; i++) {
-                try {
-                    return await signInAnonymously(auth);
-                } catch (err) {
-                    if (i === retries - 1) throw err;
-                    await new Promise(resolve => setTimeout(resolve, delay));
-                    delay *= 2;
-                }
-            }
-        }
 
         async function init() {
             try {
@@ -46,13 +31,26 @@
                 auth = getAuth(app);
                 db = getFirestore(app);
 
-                await signInWithRetry(auth);
+                // 익명 로그인 - 재시도 로직 포함
+                const login = async (retryCount = 0) => {
+                    try {
+                        await signInAnonymously(auth);
+                    } catch (err) {
+                        if (retryCount < 3) {
+                            setTimeout(() => login(retryCount + 1), 1000 * Math.pow(2, retryCount));
+                        } else {
+                            throw err;
+                        }
+                    }
+                };
+                
+                await login();
                 
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
-                        document.getElementById('user-id').innerText = `나의 접속 ID: ${user.uid.substring(0, 8)}`;
+                        document.getElementById('user-id').innerText = `접속 ID: ${user.uid.substring(0, 8)}`;
                         document.getElementById('status-badge').innerText = "실시간 동기화 중";
-                        document.getElementById('status-badge').className = "bg-emerald-100 text-emerald-700 text-xs px-2 py-1 rounded";
+                        document.getElementById('status-badge').className = "bg-emerald-100 text-emerald-700 text-xs px-2 py-1 rounded shadow-sm font-bold";
                         startSync();
                     }
                 });
@@ -60,8 +58,8 @@
                 initChart();
             } catch (error) {
                 console.error("초기화 실패:", error);
-                document.getElementById('status-badge').innerText = "연결 오류";
-                document.getElementById('status-badge').className = "bg-red-100 text-red-700 text-xs px-2 py-1 rounded";
+                document.getElementById('status-badge').innerText = "연결 오류 - 승인 도메인 확인 필요";
+                document.getElementById('status-badge').className = "bg-red-100 text-red-700 text-xs px-2 py-1 rounded shadow-sm";
             }
         }
 
@@ -77,7 +75,7 @@
                     { id: "f1", label: "구이용 고기 (소고기/돼지고기)" },
                     { id: "f2", label: "쌈야채 & 구이용 채소 (버섯, 양파 등)" },
                     { id: "f3", label: "양념류 (소금, 후추, 쌈장, 간장 등)" },
-                    { id: "f4", label: "쌀 또는 햇반 (조리기구는 대여됨)" },
+                    { id: "f4", label: "쌀 또는 햇반 (조리기구 대여됨)" },
                     { id: "f5", label: "생수 & 음료 & 주류" },
                     { id: "f6", label: "간식류 (마시멜로, 과자 등)" }
                 ]
@@ -86,33 +84,23 @@
                 categoryId: "baby-16m",
                 categoryName: "아기용품 (16개월 필수!) 👶",
                 items: [
-                    { id: "b1", label: "이유식/유아식 (전자레인지 사용 가능)" },
-                    { id: "b2", label: "아기 전용 수저/포크 (대여용은 성인용)" },
+                    { id: "b1", label: "이유식/유아식 (전자레인지 가능)" },
+                    { id: "b2", label: "아기 전용 수저/포크" },
                     { id: "b3", label: "기저귀 넉넉히 & 휴대용 변기" },
                     { id: "b4", label: "아기 세정제 & 목욕 용품" },
                     { id: "b5", label: "밤 기온 대비 수면조끼 & 두툼한 겉옷" },
-                    { id: "b6", label: "애착 인형 또는 장난감" }
+                    { id: "b6", label: "아기 상비약 (해열제, 체온계)" }
                 ]
             },
             {
                 categoryId: "personal-gear",
                 categoryName: "개인 위생 & 편의 🧺",
                 items: [
-                    { id: "p1", label: "개인 세면도구 (치약, 칫솔, 샴푸 등)" },
-                    { id: "p2", label: "수건 (대여 품목에 없음)" },
-                    { id: "p3", label: "멀티탭 (전기장판 사용 및 충전용)" },
-                    { id: "p4", label: "휴대폰 충전기 & 보조배터리" },
+                    { id: "p1", label: "개인 세면도구 (칫솔, 치약 등)" },
+                    { id: "p2", label: "수건 (대여 품목 아님 - 필수!)" },
+                    { id: "p3", label: "개인 베개 (아기용/성인용)" },
+                    { id: "p4", label: "멀티탭 (전기장판/충전용)" },
                     { id: "p5", label: "여벌 옷 & 양말 넉넉히" }
-                ]
-            },
-            {
-                categoryId: "medical",
-                categoryName: "상비약 & 위생 💊",
-                items: [
-                    { id: "m1", label: "아기 해열제 & 체온계" },
-                    { id: "m2", label: "모기 기피제 & 버물리" },
-                    { id: "m3", label: "물티슈 & 에탄올 티슈" },
-                    { id: "m4", label: "일반 밴드 & 연고" }
                 ]
             }
         ];
@@ -122,20 +110,34 @@
             onSnapshot(docRef, (docSnap) => {
                 if (docSnap.exists()) {
                     checklistState = docSnap.data();
-                    updateUIFromState();
+                } else {
+                    checklistState = {};
                 }
+                updateUIFromState();
             }, (error) => {
                 console.error("동기화 에러:", error);
-                // 규칙(Rules) 설정이 안 되어 있을 경우 여기서 에러가 발생합니다.
             });
         }
 
         window.toggleItem = async (itemId) => {
-            if (!auth.currentUser) return;
+            if (!auth.currentUser) {
+                alert("서버와 연결 중입니다. 잠시만 기다려주세요.");
+                return;
+            }
+            
+            // 즉각적인 UI 반영 (낙관적 업데이트)
             const newState = !checklistState[itemId];
             checklistState[itemId] = newState;
-            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'packing_status');
-            await setDoc(docRef, checklistState, { merge: true });
+            updateUIFromState();
+
+            // 서버 저장
+            try {
+                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'packing_status');
+                await setDoc(docRef, checklistState, { merge: true });
+            } catch (err) {
+                console.error("저장 실패:", err);
+                // 에러 시 상태 복구 로직 등을 추가할 수 있습니다.
+            }
         };
 
         function renderChecklistUI() {
@@ -150,8 +152,13 @@
                     totalItemsCount++;
                     itemsHtml += `
                         <div onclick="toggleItem('${item.id}')" class="flex items-center p-4 hover:bg-stone-50 transition cursor-pointer border-b border-stone-50 last:border-0 group">
-                            <input type="checkbox" id="check-${item.id}" class="w-6 h-6 rounded-lg text-emerald-600 focus:ring-emerald-500 pointer-events-none">
-                            <label class="ml-4 text-stone-700 font-medium cursor-pointer flex-1 group-hover:text-emerald-700" id="label-${item.id}">
+                            <div class="relative flex items-center justify-center">
+                                <input type="checkbox" id="check-${item.id}" class="w-6 h-6 rounded-lg border-2 border-stone-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer appearance-none checked:bg-emerald-600 checked:border-emerald-600 transition-all">
+                                <svg class="absolute w-4 h-4 text-white hidden peer-checked:block pointer-events-none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                                </svg>
+                            </div>
+                            <label class="ml-4 text-stone-700 font-medium cursor-pointer flex-1 group-hover:text-emerald-700 transition-colors" id="label-${item.id}">
                                 ${item.label}
                             </label>
                         </div>
@@ -159,7 +166,7 @@
                 });
                 section.innerHTML = `
                     <div class="bg-stone-50 px-5 py-3 border-b border-stone-200">
-                        <h3 class="font-bold text-stone-800">${category.categoryName}</h3>
+                        <h3 class="font-bold text-stone-800 text-sm">${category.categoryName}</h3>
                     </div>
                     <div class="divide-y divide-stone-50">${itemsHtml}</div>
                 `;
@@ -169,19 +176,21 @@
 
         function updateUIFromState() {
             let completedCount = 0;
-            Object.keys(checklistState).forEach(itemId => {
-                const isChecked = checklistState[itemId];
-                const input = document.getElementById(`check-${itemId}`);
-                const label = document.getElementById(`label-${itemId}`);
-                if (input && label) {
-                    input.checked = isChecked;
-                    if (isChecked) {
-                        label.classList.add('line-through', 'text-stone-400');
-                        completedCount++;
-                    } else {
-                        label.classList.remove('line-through', 'text-stone-400');
+            checklistData.forEach(category => {
+                category.items.forEach(item => {
+                    const isChecked = !!checklistState[item.id];
+                    const input = document.getElementById(`check-${item.id}`);
+                    const label = document.getElementById(`label-${item.id}`);
+                    if (input && label) {
+                        input.checked = isChecked;
+                        if (isChecked) {
+                            label.classList.add('line-through', 'text-stone-400');
+                            completedCount++;
+                        } else {
+                            label.classList.remove('line-through', 'text-stone-400');
+                        }
                     }
-                }
+                });
             });
             updateChart(completedCount);
         }
@@ -192,12 +201,12 @@
                 type: 'doughnut',
                 data: {
                     labels: ['완료', '미완료'],
-                    datasets: [{ data: [0, 100], backgroundColor: ['#059669', '#f3f4f6'], borderWidth: 0 }]
+                    datasets: [{ data: [0, 100], backgroundColor: ['#10b981', '#f3f4f6'], borderWidth: 0 }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    cutout: '80%',
+                    cutout: '82%',
                     plugins: { legend: { display: false }, tooltip: { enabled: false } }
                 }
             });
@@ -215,60 +224,79 @@
         window.onload = init;
     </script>
     <style>
-        .chart-container { position: relative; width: 100%; height: 240px; }
-        input[type="checkbox"] { accent-color: #059669; }
+        .chart-container { position: relative; width: 100%; height: 160px; }
+        input:checked + label { color: #9ca3af; text-decoration: line-through; }
+        /* 체크박스 스타일 보정 */
+        input[type="checkbox"]:checked {
+            background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M12.207 4.793a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0l-2-2a1 1 0 011.414-1.414L6.5 9.086l4.293-4.293a1 1 0 011.414 0z'/%3e%3c/svg%3e");
+            background-size: 100% 100%;
+            background-position: center;
+            background-repeat: no-repeat;
+        }
     </style>
 </head>
-<body class="bg-stone-100 text-stone-800 font-sans antialiased min-h-screen pb-10">
+<body class="bg-stone-50 text-stone-800 font-sans antialiased min-h-screen pb-10">
 
-<div class="max-w-3xl mx-auto p-4 md:p-8">
-    <header class="text-center mb-8">
-        <h1 class="text-3xl font-bold text-stone-900 mb-2">🏔️ 우리 가족 캠핑 플래너</h1>
-        <p class="text-stone-500 text-sm mb-4">사이트 제공 물품을 제외한 개인 준비물 리스트입니다.</p>
-        <div id="user-id" class="inline-block bg-stone-200 text-stone-600 text-[10px] px-3 py-1 rounded-full uppercase tracking-wider italic">연결 대기 중...</div>
+<div class="max-w-xl mx-auto p-4 md:p-6">
+    <header class="text-center mb-8 pt-4">
+        <div class="inline-block bg-emerald-50 text-emerald-600 text-[10px] font-bold px-3 py-1 rounded-full mb-3 uppercase tracking-widest">Camping Planner</div>
+        <h1 class="text-3xl font-black text-stone-900 mb-2 tracking-tight text-center">🏔️ 우리 가족 캠핑 플래너</h1>
+        <p class="text-stone-500 text-sm mb-4">가족과 실시간으로 공유하는 준비물 리스트</p>
+        <div id="user-id" class="inline-block bg-white border border-stone-200 text-stone-400 text-[10px] px-3 py-1 rounded-full shadow-sm tracking-tighter">연결 시도 중...</div>
     </header>
 
-    <section class="bg-white p-6 rounded-3xl shadow-sm border border-stone-200 mb-8 relative overflow-hidden">
-        <div class="flex flex-col md:flex-row items-center gap-6">
-            <div class="chart-container flex-shrink-0">
+    <section class="bg-white p-6 rounded-[2rem] shadow-xl shadow-stone-200/50 border border-stone-100 mb-8 relative overflow-hidden">
+        <div class="flex items-center gap-6">
+            <div class="chart-container flex-shrink-0 w-32 h-32">
                 <canvas id="progressChart"></canvas>
-                <div class="absolute inset-0 flex flex-col items-center justify-center pt-4">
-                    <span id="percent-text" class="text-4xl font-black text-stone-900">0%</span>
-                    <span id="count-text" class="text-xs text-stone-400 font-medium">0 / 0</span>
+                <div class="absolute inset-0 flex flex-col items-center justify-center pt-1">
+                    <span id="percent-text" class="text-3xl font-black text-stone-900 leading-none">0%</span>
+                    <span id="count-text" class="text-[10px] text-stone-400 font-bold mt-1 uppercase">0 / 0</span>
                 </div>
             </div>
             <div class="flex-1">
-                <h2 class="text-xl font-bold mb-2">실시간 패킹 현황</h2>
-                <p class="text-stone-500 text-sm leading-relaxed mb-4">가족과 공유하여 함께 짐을 챙기세요. 실시간으로 동기화됩니다!</p>
-                <div class="flex gap-2">
-                    <span id="status-badge" class="bg-stone-100 text-stone-500 text-xs px-2 py-1 rounded">연결 확인 중</span>
-                    <span class="bg-amber-100 text-amber-700 text-xs px-2 py-1 rounded text-center">Snowpeak Way</span>
+                <div class="flex items-center gap-2 mb-3">
+                    <span id="status-badge" class="bg-stone-100 text-stone-400 text-[10px] px-2 py-1 rounded shadow-sm font-bold">오프라인</span>
+                    <div class="w-1 h-1 rounded-full bg-stone-300"></div>
+                    <span class="text-stone-400 text-[10px] font-bold uppercase tracking-wider">Tent Suite</span>
                 </div>
+                <h2 class="text-xl font-black mb-1 text-stone-800 leading-tight">패킹 진행도</h2>
+                <p class="text-stone-400 text-xs leading-relaxed">항목을 터치하여 체크하면 가족의 화면에도 즉시 반영됩니다.</p>
             </div>
         </div>
     </section>
 
-    <div id="checklist-container">
-        <div class="text-center py-10 text-stone-400">데이터를 불러오는 중입니다...</div>
+    <div id="checklist-container" class="space-y-4">
+        <!-- JS로 생성됨 -->
     </div>
 
-    <div class="mt-8 bg-stone-800 text-stone-300 p-6 rounded-3xl">
-        <h3 class="font-bold text-white mb-3 flex items-center">
-            <span class="mr-2">🏠</span> 사이트 기본 제공 품목 (랜드록)
-        </h3>
-        <div class="grid grid-cols-2 gap-2 text-xs opacity-80">
-            <div>• 랜드록 풀 세트 구성</div>
-            <div>• IGT 주방 세트 & 테이블/의자</div>
-            <div>• 조리기구 일체 & 화로 세트</div>
-            <div>• 장작 1Box & 조리용 가스 1개</div>
-            <div>• 에어매트 2개 & 이너매트 1개</div>
-            <div>• 전기장판 1매 (동계 기준)</div>
-            <div>• 침구류 2개 (기본 2인)</div>
+    <div class="mt-10 bg-stone-900 text-stone-400 p-8 rounded-[2rem] shadow-2xl relative overflow-hidden">
+        <div class="absolute top-0 right-0 p-4 opacity-10">
+            <svg class="w-24 h-24 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z"/></svg>
         </div>
-        <p class="mt-4 text-[11px] text-amber-400 leading-tight">
-            * 기본 침구는 2인용입니다. 아기(16개월)와 함께 주무실 <b>추가 침구류와 베개</b>를 꼭 챙기세요!<br>
-            * 체크인: 15:00 / 체크아웃: 12:00
-        </p>
+        <h3 class="font-black text-white mb-6 flex items-center text-lg">
+            <span class="bg-emerald-500 w-2 h-6 rounded-full mr-3"></span>
+            캠프필드 이용 정보
+        </h3>
+        <div class="space-y-4">
+            <div class="flex justify-between items-center border-b border-stone-800 pb-3">
+                <span class="text-xs font-bold uppercase tracking-widest text-stone-500">Check-in/out</span>
+                <span class="text-white font-medium text-sm text-right">15:00 - 20:00 / 12:00</span>
+            </div>
+            <div class="flex justify-between items-start border-b border-stone-800 pb-3">
+                <span class="text-xs font-bold uppercase tracking-widest text-stone-500">Included</span>
+                <span class="text-white text-right text-sm leading-relaxed">랜드록, 조리기구, IGT 세트,<br>화로대, 장작 1Box, 가스 1개</span>
+            </div>
+            <div class="flex justify-between items-start border-b border-stone-800 pb-3">
+                <span class="text-xs font-bold uppercase tracking-widest text-stone-500">Bedding</span>
+                <span class="text-white text-right text-sm leading-relaxed">이너매트, 침구류 2개,<br>전기장판 1매</span>
+            </div>
+            <div class="bg-amber-950/30 border border-amber-900/50 p-4 rounded-2xl mt-4">
+                <p class="text-amber-400 text-xs leading-relaxed font-medium">
+                    ⚠️ <span class="font-bold">주의:</span> 성인 2인 기준이므로, 16개월 아기용 침구류와 여분 베개는 꼭 직접 챙겨주세요!
+                </p>
+            </div>
+        </div>
     </div>
 </div>
 
