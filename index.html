@@ -22,27 +22,36 @@
         let chartInstance = null;
         let totalItemsCount = 0;
 
+        // 초기화 함수
         const initAuth = async () => {
-            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                await signInWithCustomToken(auth, __initial_auth_token);
-            } else {
-                await signInAnonymously(auth);
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Auth Error:", error);
+                document.getElementById('user-id').innerText = "오프라인 모드";
             }
         };
 
+        // 인증 상태 변경 리스너
         onAuthStateChanged(auth, (u) => {
             user = u;
+            const userIdDisplay = document.getElementById('user-id');
+            const statusBadge = document.getElementById('status-badge');
+            
             if (user) {
-                const userIdDisplay = document.getElementById('user-id');
-                const statusBadge = document.getElementById('status-badge');
                 userIdDisplay.innerText = `접속 ID: ${user.uid}`;
                 statusBadge.innerText = "실시간 동기화 중";
                 statusBadge.className = "bg-emerald-100 text-emerald-700 text-[10px] px-2 py-1 rounded shadow-sm font-bold";
                 startSync();
+            } else {
+                userIdDisplay.innerText = "사용자 인증 중...";
             }
         });
 
-        // 햇반과 컵라면이 분리된 리스트 데이터
         const checklistData = [
             {
                 categoryId: "coffee",
@@ -61,7 +70,7 @@
                     { id: "af3", label: "양념류 (허브솔트, 쌈장, 참기름 - 소분)" },
                     { id: "af4", label: "국물 요리 (밀키트 된장/부대찌개)" },
                     { id: "af5_1", label: "햇반 (2~3개)" },
-                    { id: "af5_2", label: "컵라면" },
+                    { id: "af5_2", label: "컵라면 (개별 준비)" },
                     { id: "af6", label: "음료 (생수 넉넉히, 맥주/와인, 음료수)" }
                 ]
             },
@@ -112,7 +121,9 @@
                     checklistState = docSnap.data();
                 }
                 updateUIFromState();
-            }, (error) => console.error("Sync Error:", error));
+            }, (error) => {
+                console.error("Sync Error:", error);
+            });
         }
 
         window.toggleItem = async (itemId) => {
@@ -135,14 +146,14 @@
                 category.items.forEach(item => {
                     totalItemsCount++;
                     itemsHtml += `
-                        <div onclick="toggleItem('${item.id}')" class="flex items-center p-4 hover:bg-stone-50 transition cursor-pointer border-b border-stone-50 last:border-0 group">
+                        <div onclick="toggleItem('${item.id}')" class="flex items-center p-4 hover:bg-stone-50 transition cursor-pointer border-b border-stone-50 last:border-0 group text-left">
                             <div class="relative flex items-center justify-center">
                                 <input type="checkbox" id="check-${item.id}" class="peer w-6 h-6 rounded-lg border-2 border-stone-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer appearance-none checked:bg-emerald-600 checked:border-emerald-600 transition-all">
                                 <svg class="absolute w-4 h-4 text-white hidden peer-checked:block pointer-events-none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                                     <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
                                 </svg>
                             </div>
-                            <label class="ml-4 text-stone-700 font-medium cursor-pointer flex-1 group-hover:text-emerald-700 transition-colors text-sm text-left" id="label-${item.id}">
+                            <label class="ml-4 text-stone-700 font-medium cursor-pointer flex-1 group-hover:text-emerald-700 transition-colors text-sm" id="label-${item.id}">
                                 ${item.label}
                             </label>
                         </div>
@@ -208,9 +219,9 @@
         }
 
         window.onload = () => {
-            initAuth();
             renderChecklistUI();
             initChart();
+            initAuth();
         };
     </script>
     <style>
@@ -218,10 +229,6 @@
         input[type="checkbox"]:checked {
             background-color: #10b981 !important;
             border-color: #10b981 !important;
-            background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M12.207 4.793a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0l-2-2a1 1 0 011.414-1.414L6.5 9.086l4.293-4.293a1 1 0 011.414 0z'/%3e%3c/svg%3e") !important;
-            background-size: 100% 100% !important;
-            background-position: center !important;
-            background-repeat: no-repeat !important;
         }
     </style>
 </head>
@@ -231,10 +238,9 @@
     <header class="text-center mb-8 pt-4">
         <div class="inline-block bg-emerald-50 text-emerald-600 text-[10px] font-bold px-3 py-1 rounded-full mb-3 uppercase tracking-widest">Snow Peak Campaign</div>
         <h1 class="text-2xl font-black text-stone-900 mb-2 tracking-tight">🏔️ 우리 가족 캠핑 플래너</h1>
-        <div id="user-id" class="inline-block bg-white border border-stone-200 text-stone-400 text-[9px] px-3 py-1 rounded-full shadow-sm tracking-tighter uppercase font-bold overflow-hidden max-w-[200px] text-ellipsis whitespace-nowrap">연결 중...</div>
+        <div id="user-id" class="inline-block bg-white border border-stone-200 text-stone-400 text-[9px] px-3 py-1 rounded-full shadow-sm tracking-tighter uppercase font-bold overflow-hidden max-w-[200px] text-ellipsis whitespace-nowrap">사용자 인식 중...</div>
     </header>
 
-    <!-- 진행도 섹션 -->
     <section class="bg-white p-6 rounded-[2rem] shadow-xl shadow-stone-200/50 border border-stone-100 mb-8 relative overflow-hidden">
         <div class="flex items-center gap-6">
             <div class="chart-container flex-shrink-0 w-32 h-32">
@@ -246,21 +252,17 @@
             </div>
             <div class="flex-1 text-left">
                 <div class="flex items-center gap-2 mb-3">
-                    <span id="status-badge" class="bg-stone-100 text-stone-400 text-[10px] px-2 py-1 rounded shadow-sm font-bold animate-pulse">오프라인</span>
-                    <span class="text-stone-400 text-[10px] font-bold uppercase tracking-wider">Cloud Sync</span>
+                    <span id="status-badge" class="bg-stone-100 text-stone-400 text-[10px] px-2 py-1 rounded shadow-sm font-bold animate-pulse">인증 대기</span>
+                    <span class="text-stone-400 text-[10px] font-bold uppercase tracking-widest">Cloud Sync</span>
                 </div>
-                <h2 class="text-xl font-black mb-1 text-stone-800 leading-tight">패킹 진행도</h2>
+                <h2 class="text-xl font-black mb-1 text-stone-800 leading-tight tracking-tight">패킹 진행도</h2>
                 <p class="text-stone-400 text-xs italic">준비를 마치고 체크해보세요!</p>
             </div>
         </div>
     </section>
 
-    <!-- 체크리스트 컨테이너 -->
-    <div id="checklist-container" class="space-y-4">
-        <!-- JS 동적 생성 -->
-    </div>
+    <div id="checklist-container" class="space-y-4"></div>
 
-    <!-- 하단 이용 정보 (이미지 내용 그대로 반영) -->
     <div class="mt-10 bg-stone-900 text-stone-400 p-8 rounded-[2rem] shadow-2xl relative overflow-hidden text-left">
         <div class="absolute top-0 right-0 p-6 opacity-5">
             <svg class="w-32 h-32 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M12 3L2 12h3v8h14v-8h3L12 3zm0 4.5c1.4 0 2.5 1.1 2.5 2.5S13.4 12.5 12 12.5 9.5 11.4 9.5 10 10.6 7.5 12 7.5z"/></svg>
@@ -273,47 +275,40 @@
 
         <div class="space-y-4 relative z-10 text-xs font-medium">
             <div class="flex justify-between items-center border-b border-stone-800 pb-3">
-                <span class="text-stone-500 font-bold tracking-widest uppercase">캠핑 기간</span>
+                <span class="text-stone-500 font-bold uppercase tracking-tighter">캠핑 기간</span>
                 <span class="text-white italic">2026. 04. 25 (토) - 26 (일)</span>
             </div>
-            
             <div class="flex justify-between items-center border-b border-stone-800 pb-3">
-                <span class="text-stone-500 font-bold tracking-widest uppercase">시즌 침구 구성</span>
+                <span class="text-stone-500 font-bold uppercase tracking-tighter">시즌 침구 구성</span>
                 <span class="text-emerald-400 font-bold">동계 침구 (4월 말까지 제공)</span>
             </div>
-            
             <div class="flex justify-between items-center border-b border-stone-800 pb-3">
-                <span class="text-stone-500 font-bold tracking-widest uppercase">차량 진입</span>
+                <span class="text-stone-500 font-bold uppercase tracking-tighter">차량 진입</span>
                 <span class="text-white">진입 불가 (카트 이동 필요)</span>
             </div>
-            
             <div class="flex justify-between items-center border-b border-stone-800 pb-3">
-                <span class="text-stone-500 font-bold tracking-widest uppercase">텐트 정보</span>
+                <span class="text-stone-500 font-bold uppercase tracking-tighter">텐트 정보</span>
                 <span class="text-white">랜드록 (거실형 대형 텐트)</span>
             </div>
-            
             <div class="flex justify-between items-start border-b border-stone-800 pb-3">
-                <span class="text-stone-500 font-bold tracking-widest uppercase">기본 제공</span>
+                <span class="text-stone-500 font-bold uppercase tracking-tighter">기본 제공</span>
                 <div class="text-right text-white">
                     장작 1박스, 조리용 가스 1개,<br>IGT 주방 세트, 화로 세트
                 </div>
             </div>
-            
             <div class="flex justify-between items-start border-b border-stone-800 pb-3">
-                <span class="text-stone-500 font-bold tracking-widest uppercase">동계 침구 상세</span>
+                <span class="text-stone-500 font-bold uppercase tracking-tighter">등계 침구 상세</span>
                 <div class="text-right text-white">
                     이너매트 1개, 침구류 2개,<br>전기장판 1매 (2인 기준)
                 </div>
             </div>
-            
             <div class="flex justify-between items-start border-b border-stone-800 pb-3">
-                <span class="text-stone-500 font-bold tracking-widest uppercase">식기 세트</span>
+                <span class="text-stone-500 font-bold uppercase tracking-tighter">식기 세트</span>
                 <div class="text-right text-white">
                     식기세트 L패밀리, 칼도마세트,<br>팬쿠커, 시에라컵 등
                 </div>
             </div>
 
-            <!-- 하단 가이드 팁 -->
             <div class="bg-stone-800/50 p-4 rounded-2xl mt-4 border border-emerald-900/30">
                 <p class="text-emerald-400 leading-relaxed font-bold">
                     💡 4월 말 산속은 밤에 매우 춥습니다. 아기 수면조끼와 수분 공급을 위한 빨대컵을 잊지 마세요!
