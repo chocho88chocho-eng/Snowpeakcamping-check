@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>가족 실시간 공유 캠핑 플래너</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Firebase SDK -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // ==========================================================
+        // ✅ SiriusS님의 Firebase 설정값이 적용되었습니다.
+        // ==========================================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyBMOPnzLxDdoObZat8WLJaB_JqYff64YNU",
+            authDomain: "snowpeak-camping-checklist.firebaseapp.com",
+            projectId: "snowpeak-camping-checklist",
+            storageBucket: "snowpeak-camping-checklist.firebasestorage.app",
+            messagingSenderId: "156213939008",
+            appId: "1:156213939008:web:17ab93e60f3c412f89c8a5"
+        };
+        // ==========================================================
+
+        let app, auth, db;
+        const appId = 'snowpeak-camping-planner-v1';
+
+        async function signInWithRetry(auth, retries = 5, delay = 1000) {
+            for (let i = 0; i < retries; i++) {
+                try {
+                    return await signInAnonymously(auth);
+                } catch (err) {
+                    if (i === retries - 1) throw err;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    delay *= 2;
+                }
+            }
+        }
+
+        async function init() {
+            try {
+                app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
+                await signInWithRetry(auth);
+                
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        document.getElementById('user-id').innerText = `나의 접속 ID: ${user.uid.substring(0, 8)}`;
+                        document.getElementById('status-badge').innerText = "실시간 동기화 중";
+                        document.getElementById('status-badge').className = "bg-emerald-100 text-emerald-700 text-xs px-2 py-1 rounded";
+                        startSync();
+                    }
+                });
+                renderChecklistUI();
+                initChart();
+            } catch (error) {
+                console.error("초기화 실패:", error);
+                document.getElementById('status-badge').innerText = "연결 오류";
+                document.getElementById('status-badge').className = "bg-red-100 text-red-700 text-xs px-2 py-1 rounded";
+            }
+        }
+
+        let checklistState = {};
+        let chartInstance = null;
+        let totalItemsCount = 0;
+
+        const checklistData = [
+            {
+                categoryId: "essential-food",
+                categoryName: "개별 준비 식재료 🥩",
+                items: [
+                    { id: "f1", label: "구이용 고기 (소고기/돼지고기)" },
+                    { id: "f2", label: "쌈야채 & 구이용 채소 (버섯, 양파 등)" },
+                    { id: "f3", label: "양념류 (소금, 후추, 쌈장, 간장 등)" },
+                    { id: "f4", label: "쌀 또는 햇반 (조리기구는 대여됨)" },
+                    { id: "f5", label: "생수 & 음료 & 주류" },
+                    { id: "f6", label: "간식류 (마시멜로, 과자 등)" }
+                ]
+            },
+            {
+                categoryId: "baby-16m",
+                categoryName: "아기용품 (16개월 필수!) 👶",
+                items: [
+                    { id: "b1", label: "이유식/유아식 (전자레인지 사용 가능)" },
+                    { id: "b2", label: "아기 전용 수저/포크 (대여용은 성인용)" },
+                    { id: "b3", label: "기저귀 넉넉히 & 휴대용 변기" },
+                    { id: "b4", label: "아기 세정제 & 목욕 용품" },
+                    { id: "b5", label: "밤 기온 대비 수면조끼 & 두툼한 겉옷" },
+                    { id: "b6", label: "애착 인형 또는 장난감" }
+                ]
+            },
+            {
+                categoryId: "personal-gear",
+                categoryName: "개인 위생 & 편의 🧺",
+                items: [
+                    { id: "p1", label: "개인 세면도구 (치약, 칫솔, 샴푸 등)" },
+                    { id: "p2", label: "수건 (대여 품목에 없음)" },
+                    { id: "p3", label: "멀티탭 (전기장판 사용 및 충전용)" },
+                    { id: "p4", label: "휴대폰 충전기 & 보조배터리" },
+                    { id: "p5", label: "여벌 옷 & 양말 넉넉히" }
+                ]
+            },
+            {
+                categoryId: "medical",
+                categoryName: "상비약 & 위생 💊",
+                items: [
+                    { id: "m1", label: "아기 해열제 & 체온계" },
+                    { id: "m2", label: "모기 기피제 & 버물리" },
+                    { id: "m3", label: "물티슈 & 에탄올 티슈" },
+                    { id: "m4", label: "일반 밴드 & 연고" }
+                ]
+            }
+        ];
+
+        function startSync() {
+            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'packing_status');
+            onSnapshot(docRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    checklistState = docSnap.data();
+                    updateUIFromState();
+                }
+            }, (error) => {
+                console.error("동기화 에러:", error);
+                // 규칙(Rules) 설정이 안 되어 있을 경우 여기서 에러가 발생합니다.
+            });
+        }
+
+        window.toggleItem = async (itemId) => {
+            if (!auth.currentUser) return;
+            const newState = !checklistState[itemId];
+            checklistState[itemId] = newState;
+            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'packing_status');
+            await setDoc(docRef, checklistState, { merge: true });
+        };
+
+        function renderChecklistUI() {
+            const container = document.getElementById('checklist-container');
+            container.innerHTML = '';
+            totalItemsCount = 0;
+            checklistData.forEach(category => {
+                const section = document.createElement('div');
+                section.className = "mb-6 bg-white border border-stone-200 rounded-2xl overflow-hidden shadow-sm";
+                let itemsHtml = '';
+                category.items.forEach(item => {
+                    totalItemsCount++;
+                    itemsHtml += `
+                        <div onclick="toggleItem('${item.id}')" class="flex items-center p-4 hover:bg-stone-50 transition cursor-pointer border-b border-stone-50 last:border-0 group">
+                            <input type="checkbox" id="check-${item.id}" class="w-6 h-6 rounded-lg text-emerald-600 focus:ring-emerald-500 pointer-events-none">
+                            <label class="ml-4 text-stone-700 font-medium cursor-pointer flex-1 group-hover:text-emerald-700" id="label-${item.id}">
+                                ${item.label}
+                            </label>
+                        </div>
+                    `;
+                });
+                section.innerHTML = `
+                    <div class="bg-stone-50 px-5 py-3 border-b border-stone-200">
+                        <h3 class="font-bold text-stone-800">${category.categoryName}</h3>
+                    </div>
+                    <div class="divide-y divide-stone-50">${itemsHtml}</div>
+                `;
+                container.appendChild(section);
+            });
+        }
+
+        function updateUIFromState() {
+            let completedCount = 0;
+            Object.keys(checklistState).forEach(itemId => {
+                const isChecked = checklistState[itemId];
+                const input = document.getElementById(`check-${itemId}`);
+                const label = document.getElementById(`label-${itemId}`);
+                if (input && label) {
+                    input.checked = isChecked;
+                    if (isChecked) {
+                        label.classList.add('line-through', 'text-stone-400');
+                        completedCount++;
+                    } else {
+                        label.classList.remove('line-through', 'text-stone-400');
+                    }
+                }
+            });
+            updateChart(completedCount);
+        }
+
+        function initChart() {
+            const ctx = document.getElementById('progressChart').getContext('2d');
+            chartInstance = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['완료', '미완료'],
+                    datasets: [{ data: [0, 100], backgroundColor: ['#059669', '#f3f4f6'], borderWidth: 0 }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '80%',
+                    plugins: { legend: { display: false }, tooltip: { enabled: false } }
+                }
+            });
+        }
+
+        function updateChart(completed) {
+            if (!chartInstance) return;
+            chartInstance.data.datasets[0].data = [completed, totalItemsCount - completed];
+            chartInstance.update();
+            const percent = totalItemsCount === 0 ? 0 : Math.round((completed / totalItemsCount) * 100);
+            document.getElementById('percent-text').innerText = `${percent}%`;
+            document.getElementById('count-text').innerText = `${completed} / ${totalItemsCount}`;
+        }
+
+        window.onload = init;
+    </script>
+    <style>
+        .chart-container { position: relative; width: 100%; height: 240px; }
+        input[type="checkbox"] { accent-color: #059669; }
+    </style>
+</head>
+<body class="bg-stone-100 text-stone-800 font-sans antialiased min-h-screen pb-10">
+
+<div class="max-w-3xl mx-auto p-4 md:p-8">
+    <header class="text-center mb-8">
+        <h1 class="text-3xl font-bold text-stone-900 mb-2">🏔️ 우리 가족 캠핑 플래너</h1>
+        <p class="text-stone-500 text-sm mb-4">사이트 제공 물품을 제외한 개인 준비물 리스트입니다.</p>
+        <div id="user-id" class="inline-block bg-stone-200 text-stone-600 text-[10px] px-3 py-1 rounded-full uppercase tracking-wider italic">연결 대기 중...</div>
+    </header>
+
+    <section class="bg-white p-6 rounded-3xl shadow-sm border border-stone-200 mb-8 relative overflow-hidden">
+        <div class="flex flex-col md:flex-row items-center gap-6">
+            <div class="chart-container flex-shrink-0">
+                <canvas id="progressChart"></canvas>
+                <div class="absolute inset-0 flex flex-col items-center justify-center pt-4">
+                    <span id="percent-text" class="text-4xl font-black text-stone-900">0%</span>
+                    <span id="count-text" class="text-xs text-stone-400 font-medium">0 / 0</span>
+                </div>
+            </div>
+            <div class="flex-1">
+                <h2 class="text-xl font-bold mb-2">실시간 패킹 현황</h2>
+                <p class="text-stone-500 text-sm leading-relaxed mb-4">가족과 공유하여 함께 짐을 챙기세요. 실시간으로 동기화됩니다!</p>
+                <div class="flex gap-2">
+                    <span id="status-badge" class="bg-stone-100 text-stone-500 text-xs px-2 py-1 rounded">연결 확인 중</span>
+                    <span class="bg-amber-100 text-amber-700 text-xs px-2 py-1 rounded text-center">Snowpeak Way</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <div id="checklist-container">
+        <div class="text-center py-10 text-stone-400">데이터를 불러오는 중입니다...</div>
+    </div>
+
+    <div class="mt-8 bg-stone-800 text-stone-300 p-6 rounded-3xl">
+        <h3 class="font-bold text-white mb-3 flex items-center">
+            <span class="mr-2">🏠</span> 사이트 기본 제공 품목 (랜드록)
+        </h3>
+        <div class="grid grid-cols-2 gap-2 text-xs opacity-80">
+            <div>• 랜드록 풀 세트 구성</div>
+            <div>• IGT 주방 세트 & 테이블/의자</div>
+            <div>• 조리기구 일체 & 화로 세트</div>
+            <div>• 장작 1Box & 조리용 가스 1개</div>
+            <div>• 에어매트 2개 & 이너매트 1개</div>
+            <div>• 전기장판 1매 (동계 기준)</div>
+            <div>• 침구류 2개 (기본 2인)</div>
+        </div>
+        <p class="mt-4 text-[11px] text-amber-400 leading-tight">
+            * 기본 침구는 2인용입니다. 아기(16개월)와 함께 주무실 <b>추가 침구류와 베개</b>를 꼭 챙기세요!<br>
+            * 체크인: 15:00 / 체크아웃: 12:00
+        </p>
+    </div>
+</div>
+
+</body>
+</html>
