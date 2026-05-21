@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>가족 실시간 공유 캠핑 플래너</title>
+    <title>가족 실시간 공유 캠핑 플래너 (닷돈재)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script type="module">
@@ -11,8 +11,6 @@
         import { getAuth, signInAnonymously, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // [에러 해결!] 사용자님의 오리지널 Firebase 설정으로 복구
-        // 이제 GitHub Pages 등 외부 환경에서도 권한 충돌 없이 완벽하게 작동합니다.
         const firebaseConfig = {
             apiKey: "AIzaSyBMOPnzLxDdoObZat8WLJaB_JqYff64YNU",
             authDomain: "snowpeak-camping-checklist.firebaseapp.com",
@@ -25,15 +23,59 @@
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
-        const appId = 'snowpeak-planner-v1';
+        // 닷돈재용 새로운 앱 ID를 사용하여 기존 스노우피크 데이터와 분리합니다.
+        const appId = 'datdonjae-planner-v1';
 
         let user = null;
-        let checklistState = {};
         let chartInstance = null;
         let totalItemsCount = 0;
         let unsubscribeSync = null;
+        let isEditMode = false;
 
-        // 상태 표시 업데이트
+        // 전체 상태 객체 (카테고리 구조 + 체크 상태 모두 포함)
+        let checklistState = {
+            categories: [],
+            checkedStatus: {}
+        };
+
+        // 닷돈재 기본 템플릿 데이터
+        const defaultData = [
+            {
+                id: "cat_tent",
+                categoryName: "⛺ 텐트 및 생활 (오토캠핑)",
+                items: [
+                    { id: "t1", label: "거실형 텐트 (폴대, 팩, 스트링 확인)" },
+                    { id: "t2", label: "그라운드 시트 & 이너매트" },
+                    { id: "t3", label: "캠핑 의자 & 롤테이블" },
+                    { id: "t4", label: "침낭 및 전기장판 (산속은 밤에 추워요)" },
+                    { id: "t5", label: "릴선 (전기 사용 영지용, 20m 이상)" },
+                    { id: "t6", label: "랜턴 세트 & 여분 건전지/충전기" }
+                ]
+            },
+            {
+                id: "cat_food",
+                categoryName: "🥩 취사 및 식사",
+                items: [
+                    { id: "f1", label: "구이바다 또는 버너 & 이소가스/부탄가스" },
+                    { id: "f2", label: "코펠, 식기세트, 수저, 가위, 집게" },
+                    { id: "f3", label: "구이용 고기, 야채, 쌈장, 햇반" },
+                    { id: "f4", label: "생수, 음료, 커피, 아이 간식" },
+                    { id: "f5", label: "주방세제, 수세미, 키친타월, 쓰레기봉투" }
+                ]
+            },
+            {
+                id: "cat_valley",
+                categoryName: "💦 계곡 물놀이 & 세면",
+                items: [
+                    { id: "v1", label: "수영복/래쉬가드 & 튜브 (바람넣는 기계)" },
+                    { id: "v2", label: "아쿠아슈즈 (계곡 돌이 미끄러워요)" },
+                    { id: "v3", label: "비치타월 & 여벌 옷 넉넉히" },
+                    { id: "v4", label: "세면도구 (수건, 샴푸, 바디워시, 칫솔)" },
+                    { id: "v5", label: "모기기피제 & 벌레 물린데 바르는 약" }
+                ]
+            }
+        ];
+
         function updateConnectionStatus(text, isConnected = false) {
             const userIdDisplay = document.getElementById('user-id');
             const statusBadge = document.getElementById('status-badge');
@@ -41,15 +83,23 @@
             if (statusBadge) {
                 statusBadge.innerText = isConnected ? "실시간 동기화 중" : text;
                 statusBadge.className = isConnected 
-                    ? "bg-emerald-500 text-white text-[10px] px-2 py-1 rounded shadow-sm font-bold"
+                    ? "bg-blue-500 text-white text-[10px] px-2 py-1 rounded shadow-sm font-bold"
                     : "bg-amber-100 text-amber-600 text-[10px] px-2 py-1 rounded shadow-sm font-bold";
             }
         }
 
-        // 데이터베이스 경로
-        const getDocRef = () => doc(db, 'artifacts', appId, 'public', 'data', 'packing', 'status');
+        const getDocRef = () => doc(db, 'artifacts', appId, 'public', 'data', 'packing', 'state');
 
-        // 실시간 동기화 시작
+        // 상태 서버 저장
+        async function saveState() {
+            if (!user) return;
+            try {
+                await setDoc(getDocRef(), checklistState);
+            } catch (err) { 
+                console.error("Save Error:", err);
+            }
+        }
+
         function startSync() {
             if (!user) return;
             if (unsubscribeSync) unsubscribeSync();
@@ -57,139 +107,217 @@
             unsubscribeSync = onSnapshot(getDocRef(), (docSnap) => {
                 if (docSnap.exists()) {
                     checklistState = docSnap.data();
-                    updateUIFromState();
+                    // 구조 호환성 체크
+                    if (!checklistState.categories) checklistState.categories = [];
+                    if (!checklistState.checkedStatus) checklistState.checkedStatus = {};
+                } else {
+                    // 데이터가 없으면 기본 닷돈재 템플릿으로 초기화
+                    checklistState = {
+                        categories: defaultData,
+                        checkedStatus: {}
+                    };
+                    saveState();
                 }
+                renderChecklistUI();
             }, (error) => {
                 console.error("Sync Error:", error);
             });
         }
 
-        // 아이템 토글 (실시간 저장)
+        window.toggleEditMode = () => {
+            isEditMode = !isEditMode;
+            const btn = document.getElementById('edit-mode-btn');
+            if(isEditMode) {
+                btn.innerText = "완료";
+                btn.className = "bg-blue-600 text-white text-xs font-bold px-4 py-2 rounded-lg shadow-sm hover:bg-blue-700 transition";
+            } else {
+                btn.innerText = "리스트 편집";
+                btn.className = "bg-white border border-stone-200 text-stone-600 text-xs font-bold px-4 py-2 rounded-lg shadow-sm hover:bg-stone-50 transition";
+            }
+            renderChecklistUI();
+        };
+
         window.toggleItem = async (itemId) => {
-            if (!user) return;
-            checklistState[itemId] = !checklistState[itemId];
-            updateUIFromState(); // 즉시 반영 (낙관적 UI)
-            
-            try {
-                await setDoc(getDocRef(), checklistState, { merge: true });
-            } catch (err) { 
-                console.error("Save Error:", err);
+            if (!user || isEditMode) return; // 편집 모드일때는 토글 방지
+            checklistState.checkedStatus[itemId] = !checklistState.checkedStatus[itemId];
+            renderChecklistUI(); // 즉시 반영
+            saveState();
+        };
+
+        window.addCategory = () => {
+            const newId = 'cat_' + Date.now();
+            checklistState.categories.push({
+                id: newId,
+                categoryName: "새 카테고리",
+                items: []
+            });
+            saveState();
+            renderChecklistUI();
+        };
+
+        window.deleteCategory = (catId) => {
+            checklistState.categories = checklistState.categories.filter(c => c.id !== catId);
+            saveState();
+            renderChecklistUI();
+        };
+
+        window.addItem = (catId) => {
+            const cat = checklistState.categories.find(c => c.id === catId);
+            if(cat) {
+                const newId = 'item_' + Date.now();
+                cat.items.push({ id: newId, label: "새로운 준비물" });
+                saveState();
+                renderChecklistUI();
             }
         };
 
-        const checklistData = [
-            {
-                categoryId: "coffee",
-                categoryName: "☕ 커피 & 티타임 (바리스타 세트)",
-                items: [
-                    { id: "c1", label: "볶은 원두 (홀빈 50~100g)" },
-                    { id: "c2", label: "종이 필터 (바리스타 드리퍼용)" }
-                ]
-            },
-            {
-                categoryId: "adult-food",
-                categoryName: "🥩 어른용 식사",
-                items: [
-                    { id: "af1", label: "구이용 고기 (목살 추천)" },
-                    { id: "af2", label: "구이용 야채 (쌈, 버섯, 마늘)" },
-                    { id: "af3", label: "양념류 (허브솔트, 쌈장, 참기름)" },
-                    { id: "af4", label: "국물 요리 (밀키트 된장/부대찌개)" },
-                    { id: "af5_1", label: "햇반 (2~3개)" },
-                    { id: "af5_2", label: "컵라면 (개별 준비)" },
-                    { id: "af6", label: "음료 (생수, 맥주, 와인)" }
-                ]
-            },
-            {
-                categoryId: "baby-food",
-                categoryName: "🍼 아기용 식사 (16개월)",
-                items: [
-                    { id: "bf1", label: "완료기 이유식/유아식 (넉넉히)" },
-                    { id: "bf2", label: "구이용 간식 (아기 소시지, 고구마)" },
-                    { id: "bf3", label: "간식 (퓨레, 떡뻥, 과일)" },
-                    { id: "bf4", label: "식기류 (실리콘 식기, 빨대컵)" },
-                    { id: "bf5", label: "위생 (일회용 턱받이, 주방세제)" }
-                ]
-            },
-            {
-                categoryId: "baby-care",
-                categoryName: "👶 육아용품 (의·식·주)",
-                items: [
-                    { id: "bc1", label: "기저귀 (1.5배) & 차단 봉투" },
-                    { id: "bc2", label: "물티슈 (새거 1팩) & 건티슈" },
-                    { id: "bc3", label: "비판텐 (발진 크림)" },
-                    { id: "bc4", label: "상하복 세트 (여벌 2~3벌)" },
-                    { id: "bc5", label: "수면 조끼 & 가디건" },
-                    { id: "bc8", label: "상비약 (해열제, 체온계, 연고)" },
-                    { id: "bc9", label: "놀거리 (비눗방울, 모래놀이)" }
-                ]
-            },
-            {
-                categoryId: "convenience",
-                categoryName: "🧺 캠핑 편의 용품",
-                items: [
-                    { id: "p1", label: "방수 돗자리 (파쇄석용)" },
-                    { id: "p2", label: "이소가스 1개 추가 (커피용)" },
-                    { id: "p3", label: "일회용품 (종이컵, 젓가락)" },
-                    { id: "p4", label: "개별 조명 (야간 이동용)" }
-                ]
+        window.deleteItem = (catId, itemId) => {
+            const cat = checklistState.categories.find(c => c.id === catId);
+            if(cat) {
+                cat.items = cat.items.filter(i => i.id !== itemId);
+                delete checklistState.checkedStatus[itemId];
+                saveState();
+                renderChecklistUI();
             }
-        ];
+        };
+
+        window.updateCategoryName = (catId, newName) => {
+            const cat = checklistState.categories.find(c => c.id === catId);
+            if(cat && cat.categoryName !== newName) {
+                cat.categoryName = newName;
+                saveState();
+            }
+        };
+
+        window.updateItemLabel = (catId, itemId, newLabel) => {
+            const cat = checklistState.categories.find(c => c.id === catId);
+            if(cat) {
+                const item = cat.items.find(i => i.id === itemId);
+                if(item && item.label !== newLabel) {
+                    item.label = newLabel;
+                    saveState();
+                }
+            }
+        };
 
         function renderChecklistUI() {
             const container = document.getElementById('checklist-container');
-            if (!container) return;
+            if (!container || !checklistState.categories) return;
+
+            // 타이핑 중 포커스 유지를 위한 현재 상태 저장
+            let activeElementId = null;
+            let cursorPosition = null;
+            if (document.activeElement && document.activeElement.tagName === 'INPUT') {
+                activeElementId = document.activeElement.id;
+                cursorPosition = document.activeElement.selectionStart;
+            }
+
             container.innerHTML = '';
             totalItemsCount = 0;
-            checklistData.forEach(category => {
+            let completedCount = 0;
+
+            checklistState.categories.forEach(category => {
                 const section = document.createElement('div');
                 section.className = "mb-6 bg-white border border-stone-200 rounded-2xl overflow-hidden shadow-sm";
+                
                 let itemsHtml = '';
                 category.items.forEach(item => {
                     totalItemsCount++;
-                    itemsHtml += `
-                        <div onclick="toggleItem('${item.id}')" class="flex items-center p-4 hover:bg-stone-50 transition cursor-pointer border-b border-stone-50 last:border-0 group text-left">
-                            <div class="relative flex items-center justify-center">
-                                <input type="checkbox" id="check-${item.id}" class="peer w-6 h-6 rounded-lg border-2 border-stone-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer appearance-none checked:bg-emerald-600 checked:border-emerald-600 transition-all">
-                                <svg class="absolute w-4 h-4 text-white hidden peer-checked:block pointer-events-none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
-                                </svg>
+                    const isChecked = !!checklistState.checkedStatus[item.id];
+                    if (isChecked) completedCount++;
+
+                    if (isEditMode) {
+                        // 편집 모드 UI
+                        itemsHtml += `
+                            <div class="flex items-center p-3 border-b border-stone-100 last:border-0 bg-stone-50/50">
+                                <svg class="w-5 h-5 text-stone-300 mr-2 cursor-move" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"></path></svg>
+                                <input type="text" id="input-${item.id}" 
+                                    value="${item.label}" 
+                                    onchange="updateItemLabel('${category.id}', '${item.id}', this.value)"
+                                    class="flex-1 bg-white border border-stone-200 rounded px-3 py-2 text-sm text-stone-700 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition">
+                                <button onclick="deleteItem('${category.id}', '${item.id}')" class="ml-2 p-2 text-red-400 hover:text-red-600 transition rounded-full hover:bg-red-50">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                </button>
                             </div>
-                            <label class="ml-4 text-stone-700 font-medium cursor-pointer flex-1 group-hover:text-emerald-700 transition-colors text-sm" id="label-${item.id}">
-                                ${item.label}
-                            </label>
+                        `;
+                    } else {
+                        // 일반 체크리스트 UI
+                        itemsHtml += `
+                            <div onclick="toggleItem('${item.id}')" class="flex items-center p-4 hover:bg-stone-50 transition cursor-pointer border-b border-stone-50 last:border-0 group text-left">
+                                <div class="relative flex items-center justify-center">
+                                    <input type="checkbox" ${isChecked ? 'checked' : ''} class="peer w-6 h-6 rounded-lg border-2 border-stone-300 text-blue-600 focus:ring-blue-500 cursor-pointer appearance-none checked:bg-blue-600 checked:border-blue-600 transition-all">
+                                    <svg class="absolute w-4 h-4 text-white hidden peer-checked:block pointer-events-none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                                    </svg>
+                                </div>
+                                <label class="ml-4 flex-1 cursor-pointer text-sm transition-colors ${isChecked ? 'line-through text-stone-300' : 'text-stone-700 font-medium group-hover:text-blue-700'}">
+                                    ${item.label}
+                                </label>
+                            </div>
+                        `;
+                    }
+                });
+
+                // 카테고리 헤더
+                let headerHtml = '';
+                if (isEditMode) {
+                    headerHtml = `
+                        <div class="bg-stone-100 px-4 py-3 border-b border-stone-200 flex items-center justify-between">
+                            <input type="text" id="cat-input-${category.id}" 
+                                value="${category.categoryName}"
+                                onchange="updateCategoryName('${category.id}', this.value)"
+                                class="flex-1 bg-white border border-stone-200 rounded px-3 py-1.5 text-xs font-bold text-stone-800 uppercase tracking-wider focus:outline-none focus:border-blue-500 mr-2">
+                            <button onclick="deleteCategory('${category.id}')" class="text-xs text-red-500 font-bold px-2 py-1 rounded hover:bg-red-50 border border-transparent hover:border-red-100 transition">카테고리 삭제</button>
                         </div>
                     `;
-                });
+                } else {
+                    headerHtml = `
+                        <div class="bg-stone-50 px-5 py-3 border-b border-stone-200 text-left">
+                            <h3 class="font-bold text-stone-800 text-[11px] uppercase tracking-wider">${category.categoryName}</h3>
+                        </div>
+                    `;
+                }
+
+                // 아이템 추가 버튼 (편집 모드일 때만)
+                let footerHtml = '';
+                if (isEditMode) {
+                    footerHtml = `
+                        <div class="p-3 bg-white text-center border-t border-stone-100">
+                            <button onclick="addItem('${category.id}')" class="text-blue-600 text-xs font-bold px-4 py-2 rounded-lg bg-blue-50 hover:bg-blue-100 transition w-full">+ 아이템 추가</button>
+                        </div>
+                    `;
+                }
+
                 section.innerHTML = `
-                    <div class="bg-stone-50 px-5 py-3 border-b border-stone-200 text-left">
-                        <h3 class="font-bold text-stone-800 text-[10px] uppercase tracking-wider">${category.categoryName}</h3>
-                    </div>
+                    ${headerHtml}
                     <div class="divide-y divide-stone-50">${itemsHtml}</div>
+                    ${footerHtml}
                 `;
                 container.appendChild(section);
             });
-        }
 
-        function updateUIFromState() {
-            let completedCount = 0;
-            checklistData.forEach(category => {
-                category.items.forEach(item => {
-                    const isChecked = !!checklistState[item.id];
-                    const input = document.getElementById(`check-${item.id}`);
-                    const label = document.getElementById(`label-${item.id}`);
-                    if (input && label) {
-                        input.checked = isChecked;
-                        if (isChecked) {
-                            label.classList.add('line-through', 'text-stone-300');
-                            completedCount++;
-                        } else {
-                            label.classList.remove('line-through', 'text-stone-300', 'font-medium');
-                            label.classList.add('text-stone-700', 'font-medium');
-                        }
-                    }
-                });
-            });
+            // 카테고리 추가 버튼 (편집 모드 최하단)
+            if (isEditMode) {
+                const addCatBtn = document.createElement('div');
+                addCatBtn.innerHTML = `
+                    <button onclick="addCategory()" class="w-full py-4 border-2 border-dashed border-stone-300 rounded-2xl text-stone-500 font-bold text-sm hover:border-blue-400 hover:text-blue-500 transition mb-6">
+                        + 새로운 카테고리 추가
+                    </button>
+                `;
+                container.appendChild(addCatBtn);
+            }
+
+            // 차트 업데이트
             updateChart(completedCount);
+
+            // 포커스 복원 (사용자가 타이핑 중이었을 경우)
+            if (activeElementId) {
+                const el = document.getElementById(activeElementId);
+                if (el) {
+                    el.focus();
+                    el.setSelectionRange(cursorPosition, cursorPosition);
+                }
+            }
         }
 
         function initChart() {
@@ -199,7 +327,7 @@
                 type: 'doughnut',
                 data: {
                     labels: ['완료', '미완료'],
-                    datasets: [{ data: [0, 100], backgroundColor: ['#10b981', '#f3f4f6'], borderWidth: 0 }]
+                    datasets: [{ data: [0, 100], backgroundColor: ['#3b82f6', '#f3f4f6'], borderWidth: 0 }]
                 },
                 options: {
                     responsive: true,
@@ -219,7 +347,6 @@
             document.getElementById('count-text').innerText = `${completed} / ${totalItemsCount}`;
         }
 
-        // 사용자 인증 메인 로직
         const initAuth = async () => {
             updateConnectionStatus("서버 연결 중...", false);
             try {
@@ -229,9 +356,8 @@
                     user = u;
                     if (user) {
                         updateConnectionStatus(`ID: ${user.uid.substring(0,8)}`, true);
-                        startSync(); // 인증 성공 시 바로 동기화 시작
+                        startSync();
                     } else {
-                        // 로그인 정보가 없으면 익명 로그인 진행
                         signInAnonymously(auth).catch(err => {
                             console.error("Anonymous Sign-in Error:", err);
                             updateConnectionStatus("인증 에러", false);
@@ -245,7 +371,6 @@
         };
 
         window.onload = async () => {
-            renderChecklistUI();
             initChart();
             initAuth();
         };
@@ -258,12 +383,15 @@
 
 <div class="max-w-xl mx-auto p-4 md:p-6 text-center">
     <header class="mb-8 pt-4">
-        <div class="inline-block bg-emerald-50 text-emerald-600 text-[10px] font-bold px-3 py-1 rounded-full mb-3 uppercase tracking-widest">Snow Peak Campaign</div>
-        <h1 class="text-2xl font-black text-stone-900 mb-2 tracking-tight">🏔️ 우리 가족 캠핑 플래너</h1>
+        <div class="flex justify-between items-start mb-3">
+            <div class="inline-block bg-blue-50 text-blue-600 text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-widest">Datdonjae Camping</div>
+            <button id="edit-mode-btn" onclick="toggleEditMode()" class="bg-white border border-stone-200 text-stone-600 text-xs font-bold px-4 py-2 rounded-lg shadow-sm hover:bg-stone-50 transition">리스트 편집</button>
+        </div>
+        <h1 class="text-2xl font-black text-stone-900 mb-2 tracking-tight">🏕️ 닷돈재 가족 캠핑 플래너</h1>
         <div id="user-id" class="inline-block bg-white border border-stone-200 text-stone-400 text-[9px] px-3 py-1 rounded-full shadow-sm tracking-tighter uppercase font-bold overflow-hidden max-w-[200px] text-ellipsis whitespace-nowrap">데이터 연결 중...</div>
     </header>
 
-    <!-- 대시보드 (디자인 고정) -->
+    <!-- 대시보드 -->
     <section class="bg-white p-6 rounded-[2rem] shadow-xl shadow-stone-200/50 border border-stone-100 mb-8 relative overflow-hidden">
         <div class="flex items-center gap-6">
             <div class="chart-container flex-shrink-0 w-32 h-32">
@@ -279,72 +407,59 @@
                     <span class="text-stone-400 text-[10px] font-bold uppercase tracking-widest">Cloud Sync</span>
                 </div>
                 <h2 class="text-xl font-black mb-1 text-stone-800 leading-tight tracking-tight">패킹 진행도</h2>
-                <p class="text-stone-400 text-xs italic">준비를 마치고 체크해보세요!</p>
+                <p class="text-stone-400 text-xs italic">짐을 챙기면서 체크해보세요!</p>
             </div>
         </div>
     </section>
 
+    <!-- 체크리스트 컨테이너 -->
     <div id="checklist-container" class="space-y-4">
-        <div class="p-10 text-center text-stone-400 text-sm font-medium">리스트를 생성하는 중입니다...</div>
+        <div class="p-10 text-center text-stone-400 text-sm font-medium">데이터를 불러오는 중입니다...</div>
     </div>
 
-    <!-- 하단 상세 정보 섹션 (디자인 고정) -->
-    <div class="mt-10 bg-stone-900 text-stone-400 p-8 rounded-[3rem] shadow-2xl relative overflow-hidden text-left border-4 border-stone-800">
+    <!-- 닷돈재 하단 상세 정보 섹션 -->
+    <div class="mt-10 bg-[#1e293b] text-slate-300 p-8 rounded-[3rem] shadow-2xl relative overflow-hidden text-left border-4 border-slate-800">
         <div class="absolute top-0 right-0 p-8 opacity-10">
-             <svg class="w-20 h-20 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+             <svg class="w-24 h-24 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M14 6l-4.22 5.63 1.22 1.63L14 9.33 19 16h-4.32l-2-2.67-1.42 1.89L14 19h7L14 6zm-7.66 4.5l-4.22 5.63 1.22 1.63L6 14.33 8.32 17.5 9.74 15.61 6.34 10.5z"/></svg>
         </div>
         <h3 class="font-black text-white mb-8 flex items-center text-lg">
-            <span class="bg-emerald-500 w-2 h-6 rounded-full mr-3"></span>
-            캠프필드 상세 이용 정보
+            <span class="bg-blue-500 w-2 h-6 rounded-full mr-3"></span>
+            월악산 닷돈재 자동차야영장
         </h3>
         
         <div class="space-y-6 text-sm mb-8">
-            <div class="flex justify-between items-center border-b border-stone-800 pb-3">
-                <span class="font-bold">캠핑 기간</span>
-                <span class="text-stone-200 italic font-medium">2026. 04. 25 (토) - 26 (일)</span>
+            <div class="flex justify-between items-center border-b border-slate-700/50 pb-3">
+                <span class="font-bold text-slate-100">위치</span>
+                <span class="text-slate-300 font-medium text-right">충북 제천시 한수면 송계리</span>
             </div>
-            <div class="flex justify-between items-center border-b border-stone-800 pb-3">
-                <span class="font-bold">시즌 침구 구성</span>
-                <span class="text-emerald-400 font-bold">동계 침구 (4월 말까지 제공)</span>
+            <div class="flex justify-between items-center border-b border-slate-700/50 pb-3">
+                <span class="font-bold text-slate-100">전기 사용</span>
+                <span class="text-blue-400 font-bold">일부 영지만 가능 (릴선 필수)</span>
             </div>
-            <div class="flex justify-between items-center border-b border-stone-800 pb-3">
-                <span class="font-bold">차량 진입</span>
-                <span class="text-white font-medium">진입 불가 (카트 이동 필요)</span>
+            <div class="flex justify-between items-center border-b border-slate-700/50 pb-3">
+                <span class="font-bold text-slate-100">주차 방식</span>
+                <span class="text-slate-300 font-medium">영지 옆 또는 공용 주차장</span>
             </div>
-            <div class="flex justify-between items-center border-b border-stone-800 pb-3">
-                <span class="font-bold">텐트 정보</span>
-                <span class="text-white font-medium">랜드록 (거실형 대형 텐트)</span>
-            </div>
-            <div class="flex justify-between items-center border-b border-stone-800 pb-3">
-                <span class="font-bold">기본 제공</span>
+            <div class="flex justify-between items-start border-b border-slate-700/50 pb-3">
+                <span class="font-bold text-slate-100">주요 시설</span>
                 <div class="text-right">
-                    <div class="text-white">장작 1박스, 조리용 가스 1개,</div>
-                    <div class="text-white">IGT 주방 세트, 화로 세트</div>
+                    <div class="text-slate-300">수세식 화장실, 샤워장(코인),</div>
+                    <div class="text-slate-300">개수대, 맑은 계곡 인접</div>
                 </div>
             </div>
-            <div class="flex justify-between items-start border-b border-stone-800 pb-3">
-                <span class="font-bold">동계 침구 상세</span>
-                <div class="text-right">
-                    <div class="text-white">이너매트 1개, 침구류 2개,</div>
-                    <div class="text-white">전기장판 1매 (2인 기준)</div>
-                </div>
-            </div>
-            <div class="flex justify-between items-start border-b border-stone-800 pb-3">
-                <span class="font-bold">식기 세트</span>
-                <div class="text-right">
-                    <div class="text-white">식기세트 L패밀리, 칼도마세트,</div>
-                    <div class="text-white">팬쿠커, 시에라컵 등</div>
-                </div>
+            <div class="flex justify-between items-center border-b border-slate-700/50 pb-3">
+                <span class="font-bold text-slate-100">화로대 사용</span>
+                <span class="text-slate-300 font-medium text-right">가능 (산불조심기간 제외/숯불 권장)</span>
             </div>
         </div>
 
-        <div class="bg-stone-800/50 p-5 rounded-2xl border border-emerald-900/30">
-            <p class="text-emerald-400 font-bold text-xs mb-2 leading-relaxed">
-                💡 4월 말 산속은 밤에 매우 춥습니다. 아기 수면조끼와 수분 공급을 위한 빨대컵을 잊지 마세요!
+        <div class="bg-slate-800/80 p-5 rounded-2xl border border-blue-900/50">
+            <p class="text-blue-300 font-bold text-[13px] mb-2 leading-relaxed">
+                💡 여름철 계곡 물이 매우 찹니다! 아이들 물놀이 후 체온 유지를 위해 비치타월과 따뜻한 겉옷을 꼭 챙겨주세요.
             </p>
-            <div class="text-[10px] text-stone-500 space-y-1">
-                <p>* 필드바리스타 세트 포함 (커피 원두만 챙겨오세요!)</p>
-                <p>* 매너타임: 22:00 (전 사이트 조명 소등 권고)</p>
+            <div class="text-[10px] text-slate-400 space-y-1">
+                <p>* 산모기, 벌레가 많을 수 있으니 모기향과 기피제를 준비하세요.</p>
+                <p>* 샤워장 온수 사용을 위해 500원짜리 동전을 미리 준비하면 좋습니다.</p>
             </div>
         </div>
     </div>
