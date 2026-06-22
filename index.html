@@ -23,14 +23,15 @@
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
-        // 하와이용 새로운 앱 ID를 사용하여 기존 데이터와 분리합니다.
-        const appId = 'hawaii-planner-v1';
+        // 하와이용 새로운 앱 ID를 사용하여 부모님/가족 분리 버전을 새로 생성합니다.
+        const appId = 'hawaii-planner-v2';
 
         let user = null;
         let chartInstance = null;
         let totalItemsCount = 0;
         let unsubscribeSync = null;
         let isEditMode = false;
+        let currentTab = 'family'; // 'family' 또는 'parents'
 
         // 전체 상태 객체 (카테고리 구조 + 체크 상태 모두 포함)
         let checklistState = {
@@ -38,39 +39,76 @@
             checkedStatus: {}
         };
 
-        // 하와이 기본 템플릿 데이터
+        // 하와이 기본 템플릿 데이터 (부모님과 우리 가족 짐 분리)
         const defaultData = [
+            // --- 우리 가족 ---
             {
-                id: "cat_essential",
-                categoryName: "🛂 필수품 & 서류",
+                id: "cat_fam_essential",
+                group: "family",
+                categoryName: "🛂 우리 가족 필수품",
                 items: [
-                    { id: "e1", label: "여권 (만료일 6개월 이상 남았는지 확인)" },
-                    { id: "e2", label: "ESTA 비자 출력물" },
-                    { id: "e3", label: "해외결제 가능 신용카드 (트래블로그/월렛 등) & 현금(달러)" },
-                    { id: "e4", label: "국제운전면허증 & 한국 영문 운전면허증 (렌터카 필수)" },
-                    { id: "e5", label: "항공권 E-티켓 및 호텔 바우처" }
+                    { id: "fe1", label: "여권 (만료일 6개월 이상 남았는지 확인)" },
+                    { id: "fe2", label: "ESTA 비자 출력물" },
+                    { id: "fe3", label: "해외결제 가능 신용카드 (트래블로그/월렛 등) & 현금(달러)" },
+                    { id: "fe4", label: "국제운전면허증 & 한국 영문 운전면허증 (렌터카 필수)" },
+                    { id: "fe5", label: "항공권 E-티켓 및 호텔 바우처" }
                 ]
             },
             {
-                id: "cat_clothing",
-                categoryName: "👕 의류 & 수영용품",
+                id: "cat_fam_clothing",
+                group: "family",
+                categoryName: "👕 우리 가족 의류 & 수영용품",
                 items: [
-                    { id: "c1", label: "여름 옷, 속옷, 양말 (여유있게)" },
-                    { id: "c2", label: "수영복, 래쉬가드, 아쿠아슈즈, 샌들" },
-                    { id: "c3", label: "모자, 선글라스, 강력한 자외선 차단제" },
-                    { id: "c4", label: "얇은 긴팔 가디건 (에어컨 및 저녁 대비)" },
-                    { id: "c5", label: "비치타월 & 해변용 돗자리/가방" }
+                    { id: "fc1", label: "여름 옷, 속옷, 양말 (여유있게)" },
+                    { id: "fc2", label: "수영복, 래쉬가드, 아쿠아슈즈, 샌들" },
+                    { id: "fc3", label: "모자, 선글라스, 강력한 자외선 차단제" },
+                    { id: "fc4", label: "얇은 긴팔 가디건 (에어컨 및 저녁 대비)" },
+                    { id: "fc5", label: "비치타월 & 해변용 돗자리/가방" }
                 ]
             },
             {
-                id: "cat_electronics",
-                categoryName: "📱 전자기기 & 상비약",
+                id: "cat_fam_elec",
+                group: "family",
+                categoryName: "📱 전자기기 & 육아/상비약",
                 items: [
                     { id: "el1", label: "110V 돼지코 어댑터 & 멀티탭" },
                     { id: "el2", label: "스마트폰 충전기 & 보조배터리" },
                     { id: "el3", label: "스마트폰 방수팩 & 스노클링 장비" },
-                    { id: "el4", label: "상비약 (소화제, 진통제, 멀미약, 밴드, 지사제)" },
-                    { id: "el5", label: "기내용 목베개 & 안대" }
+                    { id: "el4", label: "아이용 상비약 (해열제, 체온계, 연고, 밴드)" },
+                    { id: "el5", label: "가족 공용 상비약 (소화제, 진통제, 멀미약, 지사제)" }
+                ]
+            },
+            // --- 부모님 ---
+            {
+                id: "cat_par_essential",
+                group: "parents",
+                categoryName: "🛂 부모님 필수품",
+                items: [
+                    { id: "pe1", label: "여권 (만료일 6개월 이상 남았는지 확인)" },
+                    { id: "pe2", label: "ESTA 비자 출력물 (부모님용)" },
+                    { id: "pe3", label: "부모님 사용하실 신용카드 및 약간의 비상금(달러)" }
+                ]
+            },
+            {
+                id: "cat_par_clothing",
+                group: "parents",
+                categoryName: "👕 부모님 의류 & 수영용품",
+                items: [
+                    { id: "pc1", label: "편안한 여름 옷, 속옷, 양말" },
+                    { id: "pc2", label: "수영복, 래쉬가드, 아쿠아슈즈 (물놀이 하실 경우)" },
+                    { id: "pc3", label: "챙 넓은 모자, 선글라스" },
+                    { id: "pc4", label: "얇은 바람막이/가디건 (기내 및 에어컨 대비 필수)" }
+                ]
+            },
+            {
+                id: "cat_par_meds",
+                group: "parents",
+                categoryName: "💊 부모님 상비약 & 기타",
+                items: [
+                    { id: "pm1", label: "매일 드시는 처방약 (여행 기간보다 여유 있게)" },
+                    { id: "pm2", label: "피로회복제, 파스, 소화제" },
+                    { id: "pm3", label: "편안한 걷기용 운동화/샌들" },
+                    { id: "pm4", label: "기내용 목베개 & 얇은 담요" }
                 ]
             }
         ];
@@ -106,11 +144,14 @@
             unsubscribeSync = onSnapshot(getDocRef(), (docSnap) => {
                 if (docSnap.exists()) {
                     checklistState = docSnap.data();
-                    // 구조 호환성 체크
+                    // 구조 호환성 체크 및 마이그레이션
                     if (!checklistState.categories) checklistState.categories = [];
                     if (!checklistState.checkedStatus) checklistState.checkedStatus = {};
+                    checklistState.categories.forEach(cat => {
+                        if (!cat.group) cat.group = 'family'; // 기존 데이터 호환
+                    });
                 } else {
-                    // 데이터가 없으면 기본 닷돈재 템플릿으로 초기화
+                    // 데이터가 없으면 기본 템플릿으로 초기화
                     checklistState = {
                         categories: defaultData,
                         checkedStatus: {}
@@ -136,6 +177,11 @@
             renderChecklistUI();
         };
 
+        window.switchTab = (tab) => {
+            currentTab = tab;
+            renderChecklistUI();
+        };
+
         window.toggleItem = async (itemId) => {
             if (!user || isEditMode) return; // 편집 모드일때는 토글 방지
             checklistState.checkedStatus[itemId] = !checklistState.checkedStatus[itemId];
@@ -147,6 +193,7 @@
             const newId = 'cat_' + Date.now();
             checklistState.categories.push({
                 id: newId,
+                group: currentTab, // 현재 탭에 카테고리 소속 지정
                 categoryName: "새 카테고리",
                 items: []
             });
@@ -201,6 +248,7 @@
 
         function renderChecklistUI() {
             const container = document.getElementById('checklist-container');
+            const tabContainer = document.getElementById('tab-container'); // 탭 컨테이너
             if (!container || !checklistState.categories) return;
 
             // 타이핑 중 포커스 유지를 위한 현재 상태 저장
@@ -212,18 +260,42 @@
             }
 
             container.innerHTML = '';
+            
+            // 1. 전체 진행도 글로벌 계산 (가족 + 부모님 짐 합산)
             totalItemsCount = 0;
             let completedCount = 0;
+            checklistState.categories.forEach(cat => {
+                cat.items.forEach(item => {
+                    totalItemsCount++;
+                    if (checklistState.checkedStatus[item.id]) completedCount++;
+                });
+            });
 
-            checklistState.categories.forEach(category => {
+            // 2. 탭 UI 렌더링
+            if (tabContainer) {
+                const isFamily = currentTab === 'family';
+                tabContainer.innerHTML = `
+                    <div class="flex space-x-2 bg-stone-200/50 p-1.5 rounded-xl mb-4">
+                        <button onclick="switchTab('family')" class="flex-1 py-2.5 text-sm font-black rounded-lg transition-all duration-300 ${isFamily ? 'bg-white text-blue-600 shadow-sm transform scale-[1.02]' : 'text-stone-400 hover:text-stone-600 hover:bg-stone-200/50'}">
+                            👨‍👩‍👧 이솜이네 체크리스트
+                        </button>
+                        <button onclick="switchTab('parents')" class="flex-1 py-2.5 text-sm font-black rounded-lg transition-all duration-300 ${!isFamily ? 'bg-white text-blue-600 shadow-sm transform scale-[1.02]' : 'text-stone-400 hover:text-stone-600 hover:bg-stone-200/50'}">
+                            👵👴 부모님 체크리스트
+                        </button>
+                    </div>
+                `;
+            }
+
+            // 3. 현재 선택된 탭의 카테고리만 필터링
+            const visibleCategories = checklistState.categories.filter(c => c.group === currentTab);
+
+            visibleCategories.forEach(category => {
                 const section = document.createElement('div');
                 section.className = "mb-6 bg-white border border-stone-200 rounded-2xl overflow-hidden shadow-sm";
                 
                 let itemsHtml = '';
                 category.items.forEach(item => {
-                    totalItemsCount++;
                     const isChecked = !!checklistState.checkedStatus[item.id];
-                    if (isChecked) completedCount++;
 
                     if (isEditMode) {
                         // 편집 모드 UI
@@ -373,7 +445,7 @@
             initChart();
             initAuth();
         };
-    </script>
+        </script>
     <style>
         .chart-container { position: relative; width: 100%; height: 160px; }
     </style>
@@ -410,6 +482,9 @@
             </div>
         </div>
     </section>
+
+    <!-- 탭 UI 컨테이너 추가 -->
+    <div id="tab-container"></div>
 
     <!-- 체크리스트 컨테이너 -->
     <div id="checklist-container" class="space-y-4">
